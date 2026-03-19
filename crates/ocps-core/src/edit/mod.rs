@@ -68,6 +68,173 @@ pub struct EditClipboard {
     pub copied_at: DateTime<Utc>,
 }
 
+/// Entry in the edit history stack
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EditHistoryEntry {
+    pub recipe: EditRecipe,
+    pub description: String,
+    pub timestamp: DateTime<Utc>,
+}
+
+/// Edit history for undo/redo functionality
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EditHistory {
+    pub entries: Vec<EditHistoryEntry>,
+    pub current_index: usize,
+    pub max_entries: usize,
+}
+
+impl EditHistory {
+    /// Create a new edit history with an initial recipe
+    pub fn new(initial: EditRecipe) -> Self {
+        Self {
+            entries: vec![EditHistoryEntry {
+                recipe: initial,
+                description: "Initial state".to_string(),
+                timestamp: Utc::now(),
+            }],
+            current_index: 0,
+            max_entries: 50,
+        }
+    }
+
+    /// Push a new recipe to history
+    /// Truncates any redo entries (entries after current_index)
+    /// If at max_entries, removes oldest entry
+    pub fn push(&mut self, recipe: EditRecipe, description: String) {
+        // Truncate redo entries (anything after current_index)
+        self.entries.truncate(self.current_index + 1);
+
+        // Add new entry
+        self.entries.push(EditHistoryEntry {
+            recipe,
+            description,
+            timestamp: Utc::now(),
+        });
+
+        // Move current index to the new entry
+        self.current_index = self.entries.len() - 1;
+
+        // If we exceeded max entries, remove the oldest
+        if self.entries.len() > self.max_entries {
+            self.entries.remove(0);
+            self.current_index = self.entries.len() - 1;
+        }
+    }
+
+    /// Undo: move back in history and return the previous recipe
+    pub fn undo(&mut self) -> Option<&EditRecipe> {
+        if self.can_undo() {
+            self.current_index -= 1;
+            Some(&self.entries[self.current_index].recipe)
+        } else {
+            None
+        }
+    }
+
+    /// Redo: move forward in history and return the next recipe
+    pub fn redo(&mut self) -> Option<&EditRecipe> {
+        if self.can_redo() {
+            self.current_index += 1;
+            Some(&self.entries[self.current_index].recipe)
+        } else {
+            None
+        }
+    }
+
+    /// Check if we can undo (not at the beginning)
+    pub fn can_undo(&self) -> bool {
+        self.current_index > 0
+    }
+
+    /// Check if we can redo (not at the end)
+    pub fn can_redo(&self) -> bool {
+        self.current_index < self.entries.len() - 1
+    }
+
+    /// Get the current recipe
+    pub fn current(&self) -> &EditRecipe {
+        &self.entries[self.current_index].recipe
+    }
+
+    /// Get entries for display with (description, is_current) pairs
+    pub fn entries_for_display(&self) -> Vec<(String, bool)> {
+        self.entries
+            .iter()
+            .enumerate()
+            .map(|(i, entry)| (entry.description.clone(), i == self.current_index))
+            .collect()
+    }
+
+    /// Generate description by comparing old and new recipes
+    pub fn auto_describe(old: &EditRecipe, new: &EditRecipe) -> String {
+        let mut changes = Vec::new();
+
+        if old.exposure != new.exposure {
+            changes.push(format!(
+                "Exposure ({:.1} → {:.1})",
+                old.exposure, new.exposure
+            ));
+        }
+
+        if old.contrast != new.contrast {
+            changes.push(format!(
+                "Contrast ({} → {})",
+                old.contrast, new.contrast
+            ));
+        }
+
+        if old.highlights != new.highlights {
+            changes.push(format!(
+                "Highlights ({} → {})",
+                old.highlights, new.highlights
+            ));
+        }
+
+        if old.shadows != new.shadows {
+            changes.push(format!("Shadows ({} → {})", old.shadows, new.shadows));
+        }
+
+        if old.whites != new.whites {
+            changes.push(format!("Whites ({} → {})", old.whites, new.whites));
+        }
+
+        if old.blacks != new.blacks {
+            changes.push(format!("Blacks ({} → {})", old.blacks, new.blacks));
+        }
+
+        if old.clarity != new.clarity {
+            changes.push(format!("Clarity ({} → {})", old.clarity, new.clarity));
+        }
+
+        if old.vibrance != new.vibrance {
+            changes.push(format!("Vibrance ({} → {})", old.vibrance, new.vibrance));
+        }
+
+        if old.saturation != new.saturation {
+            changes.push(format!(
+                "Saturation ({} → {})",
+                old.saturation, new.saturation
+            ));
+        }
+
+        if old.white_balance.temperature != new.white_balance.temperature {
+            changes.push(format!(
+                "WB Temp ({} → {})",
+                old.white_balance.temperature, new.white_balance.temperature
+            ));
+        }
+
+        if changes.is_empty() {
+            "Edit".to_string()
+        } else if changes.len() == 1 {
+            changes[0].clone()
+        } else {
+            format!("{} changes", changes.len())
+        }
+    }
+}
+
 /// Copy/paste operations for edit settings
 pub struct EditCopyPaste;
 
@@ -298,5 +465,174 @@ mod tests {
             original.white_balance.temperature
         );
         assert_eq!(result.white_balance.tint, original.white_balance.tint);
+    }
+
+    // ===== EDIT HISTORY TESTS =====
+
+    #[test]
+    fn test_history_push_and_undo() {
+        let recipe0 = EditRecipe::default();
+        let mut history = EditHistory::new(recipe0.clone());
+
+        // Push 3 more states
+        let mut recipe1 = recipe0.clone();
+        recipe1.exposure = 1.0;
+        history.push(recipe1.clone(), "Exposure +1.0".to_string());
+
+        let mut recipe2 = recipe1.clone();
+        recipe2.contrast = 20;
+        history.push(recipe2.clone(), "Contrast +20".to_string());
+
+        let mut recipe3 = recipe2.clone();
+        recipe3.shadows = 30;
+        history.push(recipe3.clone(), "Shadows +30".to_string());
+
+        // Should be at state 3
+        assert_eq!(history.current_index, 3);
+        assert_eq!(history.current().shadows, 30);
+
+        // Undo once -> should be at state 2
+        let prev = history.undo().unwrap();
+        assert_eq!(prev.shadows, 0);
+        assert_eq!(prev.contrast, 20);
+        assert_eq!(history.current_index, 2);
+
+        // Undo again -> should be at state 1
+        let prev = history.undo().unwrap();
+        assert_eq!(prev.exposure, 1.0);
+        assert_eq!(prev.contrast, 0);
+        assert_eq!(history.current_index, 1);
+
+        // Undo again -> should be at state 0
+        let prev = history.undo().unwrap();
+        assert_eq!(prev.exposure, 0.0);
+        assert_eq!(history.current_index, 0);
+
+        // Can't undo anymore
+        assert!(!history.can_undo());
+        assert!(history.undo().is_none());
+    }
+
+    #[test]
+    fn test_history_undo_redo() {
+        let recipe0 = EditRecipe::default();
+        let mut history = EditHistory::new(recipe0.clone());
+
+        let mut recipe1 = recipe0.clone();
+        recipe1.exposure = 1.0;
+        history.push(recipe1.clone(), "State 1".to_string());
+
+        let mut recipe2 = recipe1.clone();
+        recipe2.exposure = 2.0;
+        history.push(recipe2.clone(), "State 2".to_string());
+
+        let mut recipe3 = recipe2.clone();
+        recipe3.exposure = 3.0;
+        history.push(recipe3.clone(), "State 3".to_string());
+
+        // At index 3
+        assert_eq!(history.current_index, 3);
+
+        // Undo twice
+        history.undo();
+        history.undo();
+        assert_eq!(history.current_index, 1);
+
+        // Redo once
+        let next = history.redo().unwrap();
+        assert_eq!(next.exposure, 2.0);
+        assert_eq!(history.current_index, 2);
+
+        // Verify we can redo one more time
+        assert!(history.can_redo());
+        let next = history.redo().unwrap();
+        assert_eq!(next.exposure, 3.0);
+        assert_eq!(history.current_index, 3);
+
+        // Can't redo anymore
+        assert!(!history.can_redo());
+        assert!(history.redo().is_none());
+    }
+
+    #[test]
+    fn test_history_max_entries() {
+        let mut recipe = EditRecipe::default();
+        let mut history = EditHistory::new(recipe.clone());
+
+        // Push 55 entries (initial + 55 = 56 total, but max is 50)
+        for i in 1..=55 {
+            recipe.exposure = i as f32;
+            history.push(recipe.clone(), format!("State {}", i));
+        }
+
+        // Should only have 50 entries
+        assert_eq!(history.entries.len(), 50);
+
+        // Current index should be at the last entry
+        assert_eq!(history.current_index, 49);
+
+        // Oldest entries should have been removed
+        // The first entry should now be state 6 (initial 0 + states 1-5 were removed)
+        assert_eq!(history.entries[0].recipe.exposure, 6.0);
+    }
+
+    #[test]
+    fn test_history_redo_cleared_on_new_push() {
+        let recipe0 = EditRecipe::default();
+        let mut history = EditHistory::new(recipe0.clone());
+
+        let mut recipe1 = recipe0.clone();
+        recipe1.exposure = 1.0;
+        history.push(recipe1.clone(), "State 1".to_string());
+
+        let mut recipe2 = recipe1.clone();
+        recipe2.exposure = 2.0;
+        history.push(recipe2.clone(), "State 2".to_string());
+
+        let mut recipe3 = recipe2.clone();
+        recipe3.exposure = 3.0;
+        history.push(recipe3.clone(), "State 3".to_string());
+
+        // Undo twice -> at state 1
+        history.undo();
+        history.undo();
+        assert_eq!(history.current_index, 1);
+
+        // Push a new state -> should clear states 2 and 3
+        let mut recipe_new = recipe1.clone();
+        recipe_new.contrast = 50;
+        history.push(recipe_new.clone(), "New branch".to_string());
+
+        // Should have only 3 entries now (0, 1, new)
+        assert_eq!(history.entries.len(), 3);
+        assert_eq!(history.current_index, 2);
+
+        // Can't redo because we branched
+        assert!(!history.can_redo());
+
+        // Current state should have contrast 50
+        assert_eq!(history.current().contrast, 50);
+    }
+
+    #[test]
+    fn test_history_auto_describe() {
+        let old = EditRecipe::default();
+        let mut new = old.clone();
+
+        // Single change
+        new.exposure = 1.5;
+        let desc = EditHistory::auto_describe(&old, &new);
+        assert!(desc.contains("Exposure"));
+        assert!(desc.contains("0.0") || desc.contains("1.5"));
+
+        // Multiple changes
+        new.contrast = 20;
+        new.shadows = 30;
+        let desc = EditHistory::auto_describe(&old, &new);
+        assert!(desc.contains("changes"));
+
+        // No changes
+        let desc = EditHistory::auto_describe(&old, &old);
+        assert_eq!(desc, "Edit");
     }
 }

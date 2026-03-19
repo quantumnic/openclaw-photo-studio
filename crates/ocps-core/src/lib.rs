@@ -27,7 +27,7 @@ pub use pipeline::{
 
 pub mod edit;
 
-pub use edit::{EditClipboard, EditCopyPaste, EditModule};
+pub use edit::{EditClipboard, EditCopyPaste, EditHistory, EditHistoryEntry, EditModule};
 
 pub mod histogram;
 

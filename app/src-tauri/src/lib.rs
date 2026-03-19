@@ -56,6 +56,12 @@ pub fn run() {
             commands::get_photo,
             commands::get_photo_metadata,
             commands::auto_white_balance,
+            commands::verify_catalog_integrity,
+            commands::vacuum_catalog,
+            commands::backup_catalog,
+            commands::undo_edit,
+            commands::redo_edit,
+            commands::get_edit_history,
         ])
         .setup(|app| {
             #[cfg(debug_assertions)]
