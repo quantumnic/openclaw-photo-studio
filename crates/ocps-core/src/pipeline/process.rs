@@ -1,7 +1,7 @@
 //! Core image processing functions (CPU implementation)
 
 use super::color::{calculate_wb_multipliers, hsv_to_rgb, rgb_to_hsv, rgb_to_hsl, hsl_to_rgb};
-use super::types::{ColorGrading, CropSettings, HslAdjustments, RgbImage16, ToneCurve};
+use super::types::{ColorGrading, CropSettings, HealingSpot, HslAdjustments, NoiseReductionSettings, RgbImage16, SpotType, ToneCurve};
 
 /// Apply exposure adjustment (multiply by 2^ev)
 pub fn apply_exposure(data: &mut [u16], ev: f32) {
@@ -502,6 +502,384 @@ pub fn apply_color_grading(data: &mut [u16], _width: u32, _height: u32, cg: &Col
     }
 }
 
+/// Apply noise reduction using simplified Non-Local Means (NLM) for luminance + Gaussian for chroma
+/// Luminance NR: Fast NLM - search window 7x7, patch 3x3, operates at reduced resolution for performance
+/// Color NR: Box blur approximation on Cb/Cr channels
+pub fn apply_noise_reduction(
+    data: &mut [u16],
+    width: u32,
+    height: u32,
+    settings: &NoiseReductionSettings,
+) {
+    if settings.luminance == 0 && settings.color == 0 {
+        return; // Identity
+    }
+
+    let w = width as usize;
+    let h = height as usize;
+
+    // Apply luminance NR if needed
+    if settings.luminance > 0 {
+        apply_luminance_nr(data, w, h, settings.luminance);
+    }
+
+    // Apply color NR if needed
+    if settings.color > 0 {
+        apply_color_nr(data, w, h, settings.color);
+    }
+}
+
+/// Apply luminance noise reduction using simplified NLM
+fn apply_luminance_nr(data: &mut [u16], width: usize, height: usize, amount: u32) {
+    // Work at reduced resolution for performance (1/2 scale)
+    let scale = 2;
+    let small_w = width / scale;
+    let small_h = height / scale;
+
+    // Convert to YCbCr - extract Y channel at reduced resolution
+    let mut y_channel: Vec<f32> = Vec::with_capacity(small_w * small_h);
+    for y in (0..height).step_by(scale) {
+        for x in (0..width).step_by(scale) {
+            let idx = (y * width + x) * 3;
+            let r = data[idx] as f32 / 65535.0;
+            let g = data[idx + 1] as f32 / 65535.0;
+            let b = data[idx + 2] as f32 / 65535.0;
+
+            // Rec. 601 luma
+            let luma = 0.299 * r + 0.587 * g + 0.114 * b;
+            y_channel.push(luma);
+        }
+    }
+
+    // Apply simplified NLM on Y channel
+    let h_param = (amount as f32) / 100.0 * 0.1; // h parameter controls filtering strength
+    let h_squared = h_param * h_param;
+
+    let mut denoised = vec![0.0_f32; small_w * small_h];
+
+    let search_radius = 3; // 7x7 search window
+    let patch_radius = 1;  // 3x3 patch
+
+    for y in search_radius..(small_h - search_radius) {
+        for x in search_radius..(small_w - search_radius) {
+            let idx = y * small_w + x;
+            let mut weighted_sum = 0.0;
+            let mut weight_sum = 0.0;
+
+            // Search in 7x7 neighborhood
+            for dy in -(search_radius as isize)..=(search_radius as isize) {
+                for dx in -(search_radius as isize)..=(search_radius as isize) {
+                    let nx = (x as isize + dx) as usize;
+                    let ny = (y as isize + dy) as usize;
+                    let nidx = ny * small_w + nx;
+
+                    // Calculate patch distance (3x3)
+                    let mut dist_sq = 0.0;
+                    let mut patch_count = 0;
+
+                    for py in -(patch_radius as isize)..=(patch_radius as isize) {
+                        for px in -(patch_radius as isize)..=(patch_radius as isize) {
+                            let p1y = y as isize + py;
+                            let p1x = x as isize + px;
+                            let p2y = ny as isize + py;
+                            let p2x = nx as isize + px;
+
+                            if p1y >= 0 && p1y < small_h as isize && p1x >= 0 && p1x < small_w as isize
+                                && p2y >= 0 && p2y < small_h as isize && p2x >= 0 && p2x < small_w as isize {
+                                let i1 = (p1y as usize) * small_w + (p1x as usize);
+                                let i2 = (p2y as usize) * small_w + (p2x as usize);
+                                let diff = y_channel[i1] - y_channel[i2];
+                                dist_sq += diff * diff;
+                                patch_count += 1;
+                            }
+                        }
+                    }
+
+                    if patch_count > 0 {
+                        dist_sq /= patch_count as f32;
+                    }
+
+                    // Weight function: exp(-dist²/h²)
+                    let weight = (-dist_sq / h_squared.max(0.0001)).exp();
+                    weighted_sum += weight * y_channel[nidx];
+                    weight_sum += weight;
+                }
+            }
+
+            denoised[idx] = if weight_sum > 0.0 {
+                weighted_sum / weight_sum
+            } else {
+                y_channel[idx]
+            };
+        }
+    }
+
+    // Copy boundary pixels
+    for y in 0..small_h {
+        for x in 0..small_w {
+            if x < search_radius || x >= small_w - search_radius
+               || y < search_radius || y >= small_h - search_radius {
+                denoised[y * small_w + x] = y_channel[y * small_w + x];
+            }
+        }
+    }
+
+    // Apply denoised luma back to full-res image (bilinear upscale and blend)
+    for y in 0..height {
+        for x in 0..width {
+            let idx = (y * width + x) * 3;
+
+            // Sample from denoised
+            let fx = (x as f32) / (scale as f32);
+            let fy = (y as f32) / (scale as f32);
+            let sx = fx.floor() as usize;
+            let sy = fy.floor() as usize;
+
+            if sx < small_w && sy < small_h {
+                let orig_luma = {
+                    let r = data[idx] as f32 / 65535.0;
+                    let g = data[idx + 1] as f32 / 65535.0;
+                    let b = data[idx + 2] as f32 / 65535.0;
+                    0.299 * r + 0.587 * g + 0.114 * b
+                };
+
+                let denoised_luma = denoised[sy * small_w + sx];
+
+                // Blend based on amount (not full strength to preserve detail)
+                let blend = (amount as f32) / 100.0;
+                let final_luma = orig_luma * (1.0 - blend) + denoised_luma * blend;
+
+                // Apply luminance change to all channels proportionally
+                let ratio = if orig_luma > 0.001 {
+                    final_luma / orig_luma
+                } else {
+                    1.0
+                };
+
+                data[idx] = ((data[idx] as f32) * ratio).clamp(0.0, 65535.0) as u16;
+                data[idx + 1] = ((data[idx + 1] as f32) * ratio).clamp(0.0, 65535.0) as u16;
+                data[idx + 2] = ((data[idx + 2] as f32) * ratio).clamp(0.0, 65535.0) as u16;
+            }
+        }
+    }
+}
+
+/// Apply color noise reduction using box blur on chroma channels
+fn apply_color_nr(data: &mut [u16], width: usize, height: usize, color_amount: u32) {
+    // Convert RGB to YCbCr, blur Cb/Cr, convert back
+    let mut cb_channel = vec![0.0_f32; width * height];
+    let mut cr_channel = vec![0.0_f32; width * height];
+
+    // Extract Cb/Cr
+    for y in 0..height {
+        for x in 0..width {
+            let idx = (y * width + x) * 3;
+            let r = data[idx] as f32 / 65535.0;
+            let g = data[idx + 1] as f32 / 65535.0;
+            let b = data[idx + 2] as f32 / 65535.0;
+
+            // Rec. 601 YCbCr
+            let cb = -0.168736 * r - 0.331264 * g + 0.5 * b;
+            let cr = 0.5 * r - 0.418688 * g - 0.081312 * b;
+
+            let pidx = y * width + x;
+            cb_channel[pidx] = cb;
+            cr_channel[pidx] = cr;
+        }
+    }
+
+    // Apply box blur (3 passes ≈ Gaussian)
+    // Sigma maps from color_amount: 0->0, 100->3.0
+    let sigma = (color_amount as f32) / 100.0 * 3.0;
+    let radius = (sigma * 1.5).ceil() as usize;
+
+    if radius > 0 {
+        // 3 passes of box blur
+        for _ in 0..3 {
+            cb_channel = box_blur(&cb_channel, width, height, radius);
+            cr_channel = box_blur(&cr_channel, width, height, radius);
+        }
+    }
+
+    // Convert back to RGB
+    for y in 0..height {
+        for x in 0..width {
+            let idx = (y * width + x) * 3;
+            let pidx = y * width + x;
+
+            let r = data[idx] as f32 / 65535.0;
+            let g = data[idx + 1] as f32 / 65535.0;
+            let b = data[idx + 2] as f32 / 65535.0;
+
+            // Original Y
+            let y_val = 0.299 * r + 0.587 * g + 0.114 * b;
+
+            // Blurred Cb/Cr
+            let cb = cb_channel[pidx];
+            let cr = cr_channel[pidx];
+
+            // YCbCr to RGB
+            let r2 = y_val + 1.402 * cr;
+            let g2 = y_val - 0.344136 * cb - 0.714136 * cr;
+            let b2 = y_val + 1.772 * cb;
+
+            data[idx] = (r2.clamp(0.0, 1.0) * 65535.0) as u16;
+            data[idx + 1] = (g2.clamp(0.0, 1.0) * 65535.0) as u16;
+            data[idx + 2] = (b2.clamp(0.0, 1.0) * 65535.0) as u16;
+        }
+    }
+}
+
+/// Simple box blur helper
+fn box_blur(data: &[f32], width: usize, height: usize, radius: usize) -> Vec<f32> {
+    let mut result = vec![0.0_f32; width * height];
+
+    for y in 0..height {
+        for x in 0..width {
+            let mut sum = 0.0;
+            let mut count = 0;
+
+            for dy in -(radius as isize)..=(radius as isize) {
+                for dx in -(radius as isize)..=(radius as isize) {
+                    let nx = (x as isize + dx).clamp(0, width as isize - 1) as usize;
+                    let ny = (y as isize + dy).clamp(0, height as isize - 1) as usize;
+                    sum += data[ny * width + nx];
+                    count += 1;
+                }
+            }
+
+            result[y * width + x] = sum / count as f32;
+        }
+    }
+
+    result
+}
+
+/// Apply healing/clone spots for blemish removal
+pub fn apply_healing_spots(
+    data: &mut [u16],
+    width: u32,
+    height: u32,
+    spots: &[HealingSpot],
+) {
+    if spots.is_empty() {
+        return;
+    }
+
+    let w = width as usize;
+
+    for spot in spots {
+        // Convert normalized coordinates to pixels
+        let target_x = (spot.target_x * width as f32) as i32;
+        let target_y = (spot.target_y * height as f32) as i32;
+        let source_x = (spot.source_x * width as f32) as i32;
+        let source_y = (spot.source_y * height as f32) as i32;
+
+        // Radius in pixels (use average of width/height for normalization)
+        let avg_dim = ((width + height) / 2) as f32;
+        let radius_px = (spot.radius * avg_dim) as i32;
+
+        if radius_px < 1 {
+            continue;
+        }
+
+        // Process circular region around target
+        for dy in -radius_px..=radius_px {
+            for dx in -radius_px..=radius_px {
+                let tx = target_x + dx;
+                let ty = target_y + dy;
+
+                // Check bounds
+                if tx < 0 || tx >= width as i32 || ty < 0 || ty >= height as i32 {
+                    continue;
+                }
+
+                // Calculate distance from center (for circular mask and feathering)
+                let dist = ((dx * dx + dy * dy) as f32).sqrt();
+                if dist > radius_px as f32 {
+                    continue; // Outside circle
+                }
+
+                // Calculate feather mask (radial gradient)
+                let feather_start = radius_px as f32 * (1.0 - spot.feather);
+                let mask = if dist < feather_start {
+                    1.0 // Full strength inside
+                } else {
+                    // Fade out in feather region
+                    1.0 - ((dist - feather_start) / (radius_px as f32 - feather_start))
+                };
+
+                let final_opacity = mask * spot.opacity;
+
+                if final_opacity < 0.001 {
+                    continue;
+                }
+
+                // Source pixel coordinates
+                let sx = source_x + dx;
+                let sy = source_y + dy;
+
+                if sx < 0 || sx >= width as i32 || sy < 0 || sy >= height as i32 {
+                    continue; // Source out of bounds
+                }
+
+                let target_idx = (ty as usize * w + tx as usize) * 3;
+                let source_idx = (sy as usize * w + sx as usize) * 3;
+
+                match spot.spot_type {
+                    SpotType::Clone => {
+                        // Simple clone: copy source to target with opacity blending
+                        for c in 0..3 {
+                            let target_val = data[target_idx + c] as f32;
+                            let source_val = data[source_idx + c] as f32;
+                            let blended = target_val * (1.0 - final_opacity) + source_val * final_opacity;
+                            data[target_idx + c] = blended.clamp(0.0, 65535.0) as u16;
+                        }
+                    }
+                    SpotType::Heal => {
+                        // Heal: copy source texture but blend with target luminance
+                        // This creates a more natural blend
+
+                        // Calculate source and target luminance
+                        let src_r = data[source_idx] as f32 / 65535.0;
+                        let src_g = data[source_idx + 1] as f32 / 65535.0;
+                        let src_b = data[source_idx + 2] as f32 / 65535.0;
+                        let src_luma = 0.299 * src_r + 0.587 * src_g + 0.114 * src_b;
+
+                        let tgt_r = data[target_idx] as f32 / 65535.0;
+                        let tgt_g = data[target_idx + 1] as f32 / 65535.0;
+                        let tgt_b = data[target_idx + 2] as f32 / 65535.0;
+                        let tgt_luma = 0.299 * tgt_r + 0.587 * tgt_g + 0.114 * tgt_b;
+
+                        // Blend luminance
+                        let blended_luma = tgt_luma * (1.0 - final_opacity * 0.5) + src_luma * (final_opacity * 0.5);
+
+                        // Apply luminance to source color (preserve source texture/color)
+                        let luma_ratio = if src_luma > 0.001 {
+                            blended_luma / src_luma
+                        } else {
+                            1.0
+                        };
+
+                        let healed_r = (src_r * luma_ratio).clamp(0.0, 1.0);
+                        let healed_g = (src_g * luma_ratio).clamp(0.0, 1.0);
+                        let healed_b = (src_b * luma_ratio).clamp(0.0, 1.0);
+
+                        // Blend with original target
+                        let final_r = tgt_r * (1.0 - final_opacity) + healed_r * final_opacity;
+                        let final_g = tgt_g * (1.0 - final_opacity) + healed_g * final_opacity;
+                        let final_b = tgt_b * (1.0 - final_opacity) + healed_b * final_opacity;
+
+                        data[target_idx] = (final_r * 65535.0) as u16;
+                        data[target_idx + 1] = (final_g * 65535.0) as u16;
+                        data[target_idx + 2] = (final_b * 65535.0) as u16;
+                    }
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -784,5 +1162,256 @@ mod tests {
 
         // Should be unchanged since all saturations are 0
         assert_eq!(data, original);
+    }
+
+    #[test]
+    fn test_nr_zero_is_identity() {
+        let mut data = vec![10000, 20000, 30000, 40000, 50000, 60000];
+        let original = data.clone();
+        let settings = NoiseReductionSettings::default(); // luminance=0, color=0
+        apply_noise_reduction(&mut data, 2, 1, &settings);
+
+        // Should be unchanged
+        assert_eq!(data, original);
+    }
+
+    #[test]
+    fn test_nr_reduces_variance() {
+        // Create noisy image
+        let mut rng_state = 12345_u32; // Simple LCG for deterministic noise
+        let width = 50;
+        let height = 50;
+        let mut data = Vec::with_capacity(width * height * 3);
+
+        // Fill with noisy gray
+        for _ in 0..(width * height) {
+            let base = 30000_u16;
+            for _ in 0..3 {
+                // Simple pseudo-random noise
+                rng_state = rng_state.wrapping_mul(1103515245).wrapping_add(12345);
+                let noise = ((rng_state >> 16) & 0x1FFF) as i32 - 4096; // ±4096
+                let value = (base as i32 + noise).clamp(0, 65535) as u16;
+                data.push(value);
+            }
+        }
+
+        // Calculate variance before
+        let mean_before: f32 = data.iter().map(|&v| v as f32).sum::<f32>() / data.len() as f32;
+        let var_before: f32 = data.iter()
+            .map(|&v| {
+                let diff = v as f32 - mean_before;
+                diff * diff
+            })
+            .sum::<f32>() / data.len() as f32;
+
+        let mut data_denoised = data.clone();
+        let settings = NoiseReductionSettings {
+            luminance: 50,
+            color: 0,
+            ..Default::default()
+        };
+        apply_noise_reduction(&mut data_denoised, width as u32, height as u32, &settings);
+
+        // Calculate variance after
+        let mean_after: f32 = data_denoised.iter().map(|&v| v as f32).sum::<f32>() / data_denoised.len() as f32;
+        let var_after: f32 = data_denoised.iter()
+            .map(|&v| {
+                let diff = v as f32 - mean_after;
+                diff * diff
+            })
+            .sum::<f32>() / data_denoised.len() as f32;
+
+        // Variance should be reduced (noise should be smoother)
+        assert!(var_after < var_before, "Variance after ({}) should be less than before ({})", var_after, var_before);
+    }
+
+    #[test]
+    fn test_color_nr_reduces_chroma_variance() {
+        // Create image with chroma noise
+        let width = 30;
+        let height = 30;
+        let mut data = Vec::with_capacity(width * height * 3);
+
+        let mut rng_state = 54321_u32;
+
+        // Gray image with chromatic noise
+        for _ in 0..(width * height) {
+            let base = 30000_u16;
+
+            // R channel - with noise
+            rng_state = rng_state.wrapping_mul(1103515245).wrapping_add(12345);
+            let r_noise = ((rng_state >> 16) & 0xFFF) as i32 - 2048;
+            data.push((base as i32 + r_noise).clamp(0, 65535) as u16);
+
+            // G channel - base
+            data.push(base);
+
+            // B channel - with opposite noise
+            rng_state = rng_state.wrapping_mul(1103515245).wrapping_add(12345);
+            let b_noise = ((rng_state >> 16) & 0xFFF) as i32 - 2048;
+            data.push((base as i32 + b_noise).clamp(0, 65535) as u16);
+        }
+
+        // Calculate chroma variance before (R-G and B-G differences)
+        let mut chroma_var_before = 0.0_f32;
+        for y in 0..height {
+            for x in 0..width {
+                let idx = (y * width + x) * 3;
+                let r = data[idx] as i32;
+                let g = data[idx + 1] as i32;
+                let b = data[idx + 2] as i32;
+                let diff_rg = (r - g) as f32;
+                let diff_bg = (b - g) as f32;
+                chroma_var_before += diff_rg * diff_rg + diff_bg * diff_bg;
+            }
+        }
+        chroma_var_before /= (width * height) as f32;
+
+        let mut data_denoised = data.clone();
+        let settings = NoiseReductionSettings {
+            luminance: 0,
+            color: 50,
+            ..Default::default()
+        };
+        apply_noise_reduction(&mut data_denoised, width as u32, height as u32, &settings);
+
+        // Calculate chroma variance after
+        let mut chroma_var_after = 0.0_f32;
+        for y in 0..height {
+            for x in 0..width {
+                let idx = (y * width + x) * 3;
+                let r = data_denoised[idx] as i32;
+                let g = data_denoised[idx + 1] as i32;
+                let b = data_denoised[idx + 2] as i32;
+                let diff_rg = (r - g) as f32;
+                let diff_bg = (b - g) as f32;
+                chroma_var_after += diff_rg * diff_rg + diff_bg * diff_bg;
+            }
+        }
+        chroma_var_after /= (width * height) as f32;
+
+        // Chroma variance should be reduced
+        assert!(chroma_var_after < chroma_var_before,
+                "Chroma variance after ({}) should be less than before ({})",
+                chroma_var_after, chroma_var_before);
+    }
+
+    #[test]
+    fn test_healing_spots_empty_is_identity() {
+        let mut data = vec![10000, 20000, 30000, 40000, 50000, 60000];
+        let original = data.clone();
+        let spots: Vec<HealingSpot> = vec![];
+        apply_healing_spots(&mut data, 2, 1, &spots);
+
+        // Should be unchanged
+        assert_eq!(data, original);
+    }
+
+    #[test]
+    fn test_clone_copies_pixels() {
+        // Create a 20x20 image with a distinctive colored circle at source
+        let width = 20;
+        let height = 20;
+        let mut data = vec![10000_u16; width * height * 3]; // Gray background
+
+        // Create a red circle at (5, 5) with radius 2
+        for dy in -2..=2 {
+            for dx in -2..=2 {
+                if (dx * dx + dy * dy) <= 4 { // radius 2
+                    let x = 5 + dx;
+                    let y = 5 + dy;
+                    if x >= 0 && x < width as i32 && y >= 0 && y < height as i32 {
+                        let idx = ((y as usize) * width + (x as usize)) * 3;
+                        data[idx] = 50000; // Red
+                        data[idx + 1] = 10000; // Low green
+                        data[idx + 2] = 10000; // Low blue
+                    }
+                }
+            }
+        }
+
+        // Clone from (5, 5) to (15, 15)
+        let spot = HealingSpot {
+            id: "test".to_string(),
+            spot_type: SpotType::Clone,
+            target_x: 15.0 / width as f32,
+            target_y: 15.0 / height as f32,
+            source_x: 5.0 / width as f32,
+            source_y: 5.0 / height as f32,
+            radius: 2.5 / ((width + height) / 2) as f32,
+            feather: 0.0, // No feather for exact copy
+            opacity: 1.0, // Full opacity
+        };
+
+        apply_healing_spots(&mut data, width as u32, height as u32, &[spot]);
+
+        // Check that target now has similar colors to source
+        let target_idx = (15 * width + 15) * 3;
+        let source_idx = (5 * width + 5) * 3;
+
+        // Should be similar (may not be exact due to feathering/blending)
+        let r_diff = (data[target_idx] as i32 - data[source_idx] as i32).abs();
+        let g_diff = (data[target_idx + 1] as i32 - data[source_idx + 1] as i32).abs();
+        let b_diff = (data[target_idx + 2] as i32 - data[source_idx + 2] as i32).abs();
+
+        assert!(r_diff < 5000, "R channel should be similar");
+        assert!(g_diff < 5000, "G channel should be similar");
+        assert!(b_diff < 5000, "B channel should be similar");
+    }
+
+    #[test]
+    fn test_heal_blends_with_target() {
+        // Create image with different luminance regions
+        let width = 20;
+        let height = 20;
+        let mut data = vec![0_u16; width * height * 3];
+
+        // Dark background
+        for i in 0..data.len() {
+            data[i] = 10000;
+        }
+
+        // Bright source region at (5, 5)
+        for dy in -2..=2 {
+            for dx in -2..=2 {
+                if (dx * dx + dy * dy) <= 4 {
+                    let x = 5 + dx;
+                    let y = 5 + dy;
+                    if x >= 0 && x < width as i32 && y >= 0 && y < height as i32 {
+                        let idx = ((y as usize) * width + (x as usize)) * 3;
+                        data[idx] = 40000;     // Bright red
+                        data[idx + 1] = 30000; // Medium green
+                        data[idx + 2] = 20000; // Medium blue
+                    }
+                }
+            }
+        }
+
+        // Heal from bright (5, 5) to dark (15, 15)
+        let spot = HealingSpot {
+            id: "test".to_string(),
+            spot_type: SpotType::Heal,
+            target_x: 15.0 / width as f32,
+            target_y: 15.0 / height as f32,
+            source_x: 5.0 / width as f32,
+            source_y: 5.0 / height as f32,
+            radius: 2.0 / ((width + height) / 2) as f32,
+            feather: 0.0,
+            opacity: 1.0,
+        };
+
+        let original_target = data[(15 * width + 15) * 3];
+
+        apply_healing_spots(&mut data, width as u32, height as u32, &[spot]);
+
+        let healed_target = data[(15 * width + 15) * 3];
+
+        // Healed region should be different from original (texture applied)
+        assert_ne!(healed_target, original_target);
+
+        // But should not be as bright as source (luminance blended)
+        let source_val = data[(5 * width + 5) * 3];
+        assert!(healed_target < source_val, "Healed should be darker than bright source");
+        assert!(healed_target > original_target, "Healed should be brighter than dark target");
     }
 }

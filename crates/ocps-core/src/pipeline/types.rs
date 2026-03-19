@@ -331,6 +331,29 @@ pub struct LocalAdjustment {
     pub order: u32,              // rendering order
 }
 
+/// Healing/Clone spot type
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum SpotType {
+    /// Heal: blend source texture with target luminance
+    Heal,
+    /// Clone: copy source region exactly
+    Clone,
+}
+
+/// Healing or clone spot for removing blemishes
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct HealingSpot {
+    pub id: String,        // UUID
+    pub spot_type: SpotType, // Heal or Clone
+    pub target_x: f32,     // normalized 0-1 (center of spot)
+    pub target_y: f32,     // normalized 0-1
+    pub source_x: f32,     // where to copy from (normalized 0-1)
+    pub source_y: f32,     // normalized 0-1
+    pub radius: f32,       // normalized radius (0-1, relative to image size)
+    pub feather: f32,      // edge feathering 0-1
+    pub opacity: f32,      // blend opacity 0-1
+}
+
 /// Complete edit recipe for an image
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
 pub struct EditRecipe {
@@ -354,6 +377,7 @@ pub struct EditRecipe {
     pub color_grading_new: ColorGrading,
     pub lens_corrections: LensCorrections,
     pub local_adjustments: Vec<LocalAdjustment>,
+    pub healing_spots: Vec<HealingSpot>,
 }
 
 impl EditRecipe {

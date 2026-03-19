@@ -8,16 +8,16 @@ pub mod types;
 pub mod lens;
 
 pub use types::{
-    ColorGrading, ColorGradingSettings, CropSettings, CurvePoint, EditRecipe, HslAdjustments,
-    LensCorrections, NoiseReductionSettings, RgbImage16, RgbImage8, SharpeningSettings, ToneCurve,
-    WhiteBalance,
+    ColorGrading, ColorGradingSettings, CropSettings, CurvePoint, EditRecipe, HealingSpot,
+    HslAdjustments, LensCorrections, NoiseReductionSettings, RgbImage16, RgbImage8,
+    SharpeningSettings, SpotType, ToneCurve, WhiteBalance,
 };
 
 use color::u16_linear_to_u8_srgb;
 use process::{
     apply_clarity, apply_color_grading, apply_contrast, apply_crop, apply_exposure,
-    apply_highlights_shadows, apply_hsl, apply_saturation, apply_sharpening, apply_tone_curve,
-    apply_white_balance,
+    apply_healing_spots, apply_highlights_shadows, apply_hsl, apply_noise_reduction,
+    apply_saturation, apply_sharpening, apply_tone_curve, apply_white_balance,
 };
 
 /// Main image processor - applies full editing pipeline
@@ -107,7 +107,27 @@ impl ImageProcessor {
             }
         }
 
-        // Step 7: Sharpening (should be near the end)
+        // Step 6.8: Noise reduction (before sharpening to avoid amplifying noise)
+        if recipe.noise_reduction.luminance > 0 || recipe.noise_reduction.color > 0 {
+            apply_noise_reduction(
+                &mut working.data,
+                working.width,
+                working.height,
+                &recipe.noise_reduction,
+            );
+        }
+
+        // Step 7: Healing spots (blemish removal, before sharpening to avoid sharpening artifacts)
+        if !recipe.healing_spots.is_empty() {
+            apply_healing_spots(
+                &mut working.data,
+                working.width,
+                working.height,
+                &recipe.healing_spots,
+            );
+        }
+
+        // Step 8: Sharpening (should be near the end)
         if recipe.sharpening.amount > 0 {
             apply_sharpening(
                 &mut working,
@@ -116,7 +136,7 @@ impl ImageProcessor {
             );
         }
 
-        // Step 8: Crop (geometric transformation, done before output)
+        // Step 9: Crop (geometric transformation, done before output)
         if !recipe.crop.is_identity() {
             working = apply_crop(&working, &recipe.crop);
         }
