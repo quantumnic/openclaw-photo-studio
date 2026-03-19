@@ -16,6 +16,8 @@ pub use raw::{
 };
 
 pub mod pipeline;
+pub mod thumbnail_service;
+pub mod preview_cache;
 
 pub use pipeline::{
     ColorGradingSettings, CropSettings, EditRecipe, ImageProcessor, NoiseReductionSettings,
