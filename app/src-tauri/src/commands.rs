@@ -1,6 +1,73 @@
 use std::sync::Mutex;
 use tauri::State;
 
+/// Standard error type for all Tauri commands
+#[derive(Debug, serde::Serialize)]
+pub struct CommandError {
+    pub code: String,
+    pub message: String,
+    pub details: Option<String>,
+}
+
+impl CommandError {
+    pub fn catalog_not_open() -> Self {
+        Self {
+            code: "CATALOG_NOT_OPEN".into(),
+            message: "No catalog is open. Import a folder first.".into(),
+            details: None,
+        }
+    }
+
+    pub fn file_not_found(path: &str) -> Self {
+        Self {
+            code: "FILE_NOT_FOUND".into(),
+            message: format!("File not found: {}", path),
+            details: None,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn decode_failed(path: &str, reason: &str) -> Self {
+        Self {
+            code: "DECODE_FAILED".into(),
+            message: format!("Failed to decode {}", path),
+            details: Some(reason.to_string()),
+        }
+    }
+
+    pub fn catalog_error(operation: &str, error: impl std::fmt::Display) -> Self {
+        Self {
+            code: "CATALOG_ERROR".into(),
+            message: format!("{}: {}", operation, error),
+            details: None,
+        }
+    }
+
+    pub fn invalid_input(field: &str, reason: &str) -> Self {
+        Self {
+            code: "INVALID_INPUT".into(),
+            message: format!("Invalid {}: {}", field, reason),
+            details: None,
+        }
+    }
+
+    pub fn internal_error(operation: &str, error: impl std::fmt::Display) -> Self {
+        Self {
+            code: "INTERNAL_ERROR".into(),
+            message: format!("{} failed: {}", operation, error),
+            details: None,
+        }
+    }
+}
+
+impl std::fmt::Display for CommandError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "[{}] {}", self.code, self.message)
+    }
+}
+
+impl std::error::Error for CommandError {}
+
 /// Sidecar sync mode
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum SidecarMode {
@@ -18,6 +85,7 @@ pub struct AppState {
     pub sidecar_mode: Mutex<SidecarMode>,
     pub plugin_registry: Mutex<ocps_plugin_host::PluginRegistry>,
     pub preview_cache: Mutex<ocps_core::preview_cache::PreviewCache>,
+    pub histories: Mutex<std::collections::HashMap<String, ocps_core::EditHistory>>,
 }
 
 impl AppState {
@@ -54,6 +122,7 @@ impl AppState {
             sidecar_mode: Mutex::new(SidecarMode::Auto),
             plugin_registry: Mutex::new(plugin_registry),
             preview_cache: Mutex::new(preview_cache),
+            histories: Mutex::new(std::collections::HashMap::new()),
         }
     }
 }
@@ -109,15 +178,15 @@ pub fn get_catalog_info(state: State<AppState>) -> serde_json::Value {
 ///
 /// This opens a catalog in the same directory as the folder and imports all photos.
 #[tauri::command]
-pub fn import_folder(state: State<AppState>, path: String) -> Result<serde_json::Value, String> {
+pub fn import_folder(state: State<AppState>, path: String) -> Result<serde_json::Value, CommandError> {
     let folder_path = std::path::Path::new(&path);
 
     if !folder_path.exists() {
-        return Err("Folder does not exist".to_string());
+        return Err(CommandError::file_not_found(&path));
     }
 
     if !folder_path.is_dir() {
-        return Err("Path is not a directory".to_string());
+        return Err(CommandError::invalid_input("path", "not a directory"));
     }
 
     // Create catalog path in the same directory
@@ -125,12 +194,12 @@ pub fn import_folder(state: State<AppState>, path: String) -> Result<serde_json:
 
     // Open or create catalog
     let catalog = ocps_catalog::Catalog::open(&catalog_path)
-        .map_err(|e| format!("Failed to open catalog: {}", e))?;
+        .map_err(|e| CommandError::catalog_error("open catalog", e))?;
 
     // Import folder
     let result = catalog
         .import_folder(folder_path)
-        .map_err(|e| format!("Import failed: {}", e))?;
+        .map_err(|e| CommandError::catalog_error("import_folder", e))?;
 
     // Store catalog in state
     let mut catalog_lock = state.catalog.lock().unwrap();
@@ -377,6 +446,27 @@ pub fn save_edit_recipe(
     let catalog = catalog_lock
         .as_ref()
         .ok_or("No catalog open".to_string())?;
+
+    // Parse new recipe
+    let new_recipe: ocps_core::EditRecipe = serde_json::from_value(recipe)
+        .map_err(|e| format!("Failed to parse recipe: {}", e))?;
+
+    // Update history
+    let mut histories = state.histories.lock().unwrap();
+    let description = if let Some(history) = histories.get(&photo_id) {
+        // Generate description from changes
+        ocps_core::EditHistory::auto_describe(history.current(), &new_recipe)
+    } else {
+        // First edit
+        "Initial edit".to_string()
+    };
+
+    let history = histories
+        .entry(photo_id.clone())
+        .or_insert_with(|| ocps_core::EditHistory::new(ocps_core::EditRecipe::default()));
+
+    history.push(new_recipe.clone(), description);
+    drop(histories);
 
     // Save to catalog database
     catalog
@@ -762,16 +852,19 @@ pub fn export_photos_batch(
         };
 
         // Construct output filename based on naming template
-        let input_path = std::path::Path::new(&photo.file_path);
-        let file_stem = input_path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("photo");
+        let photo_for_naming = ocps_export::PhotoForNaming {
+            file_path: photo.file_path.clone(),
+            date_taken: photo.date_taken.clone(),
+            camera_make: photo.camera_make.clone(),
+            camera_model: photo.camera_model.clone(),
+            rating: photo.rating,
+        };
 
-        let output_name = naming_template
-            .replace("{original}", file_stem)
-            .replace("{seq}", &format!("{:03}", index + 1))
-            .replace("{date}", &chrono::Local::now().format("%Y-%m-%d").to_string());
+        let output_name = ocps_export::apply_naming_template(
+            &naming_template,
+            &photo_for_naming,
+            (index + 1) as u32,
+        );
 
         let output_path = output_dir.join(format!("{}.{}", output_name, extension));
 
@@ -1822,4 +1915,127 @@ pub fn auto_white_balance(
         "temperature": 5500,
         "tint": 0,
     }))
+}
+
+// ===== CATALOG MAINTENANCE COMMANDS =====
+
+/// Verify catalog database integrity
+#[tauri::command]
+pub fn verify_catalog_integrity(state: State<AppState>) -> Result<bool, CommandError> {
+    let catalog_lock = state.catalog.lock().unwrap();
+    let catalog = catalog_lock.as_ref().ok_or_else(CommandError::catalog_not_open)?;
+
+    catalog
+        .verify_integrity()
+        .map_err(|e| CommandError::internal_error("verify_catalog_integrity", e))
+}
+
+/// Vacuum catalog database to reclaim space
+#[tauri::command]
+pub fn vacuum_catalog(state: State<AppState>) -> Result<(), CommandError> {
+    let catalog_lock = state.catalog.lock().unwrap();
+    let catalog = catalog_lock.as_ref().ok_or_else(CommandError::catalog_not_open)?;
+
+    catalog
+        .vacuum()
+        .map_err(|e| CommandError::internal_error("vacuum_catalog", e))
+}
+
+/// Backup catalog to specified path
+#[tauri::command]
+pub fn backup_catalog(state: State<AppState>, backup_path: String) -> Result<(), CommandError> {
+    let catalog_lock = state.catalog.lock().unwrap();
+    let catalog = catalog_lock.as_ref().ok_or_else(CommandError::catalog_not_open)?;
+
+    let path = std::path::Path::new(&backup_path);
+    catalog
+        .create_backup(path)
+        .map_err(|e| CommandError::internal_error("backup_catalog", e))
+}
+
+// ===== UNDO/REDO COMMANDS =====
+
+/// Undo last edit for a photo
+#[tauri::command]
+pub fn undo_edit(state: State<AppState>, photo_id: String) -> Result<serde_json::Value, CommandError> {
+    let mut histories = state.histories.lock().unwrap();
+
+    let history = histories
+        .get_mut(&photo_id)
+        .ok_or_else(|| CommandError::invalid_input("photo_id", "no edit history found"))?;
+
+    let recipe = history
+        .undo()
+        .ok_or_else(|| CommandError::invalid_input("undo", "already at oldest state"))?;
+
+    // Save to catalog
+    let recipe_clone = recipe.clone();
+    drop(histories);
+
+    let catalog_lock = state.catalog.lock().unwrap();
+    let catalog = catalog_lock.as_ref().ok_or_else(CommandError::catalog_not_open)?;
+
+    let recipe_json = serde_json::to_string(&recipe_clone)
+        .map_err(|e| CommandError::internal_error("serialize recipe", e))?;
+
+    catalog
+        .save_edit(&photo_id, &recipe_json)
+        .map_err(|e| CommandError::catalog_error("save_edit", e))?;
+
+    serde_json::to_value(&recipe_clone)
+        .map_err(|e| CommandError::internal_error("convert to JSON", e))
+}
+
+/// Redo last undone edit for a photo
+#[tauri::command]
+pub fn redo_edit(state: State<AppState>, photo_id: String) -> Result<serde_json::Value, CommandError> {
+    let mut histories = state.histories.lock().unwrap();
+
+    let history = histories
+        .get_mut(&photo_id)
+        .ok_or_else(|| CommandError::invalid_input("photo_id", "no edit history found"))?;
+
+    let recipe = history
+        .redo()
+        .ok_or_else(|| CommandError::invalid_input("redo", "already at newest state"))?;
+
+    // Save to catalog
+    let recipe_clone = recipe.clone();
+    drop(histories);
+
+    let catalog_lock = state.catalog.lock().unwrap();
+    let catalog = catalog_lock.as_ref().ok_or_else(CommandError::catalog_not_open)?;
+
+    let recipe_json = serde_json::to_string(&recipe_clone)
+        .map_err(|e| CommandError::internal_error("serialize recipe", e))?;
+
+    catalog
+        .save_edit(&photo_id, &recipe_json)
+        .map_err(|e| CommandError::catalog_error("save_edit", e))?;
+
+    serde_json::to_value(&recipe_clone)
+        .map_err(|e| CommandError::internal_error("convert to JSON", e))
+}
+
+/// Get edit history for a photo
+#[tauri::command]
+pub fn get_edit_history(state: State<AppState>, photo_id: String) -> Result<Vec<serde_json::Value>, CommandError> {
+    let histories = state.histories.lock().unwrap();
+
+    let history = histories
+        .get(&photo_id)
+        .ok_or_else(|| CommandError::invalid_input("photo_id", "no edit history found"))?;
+
+    let entries = history
+        .entries_for_display()
+        .into_iter()
+        .map(|(description, is_current)| {
+            serde_json::json!({
+                "description": description,
+                "is_current": is_current,
+            })
+        })
+        .collect();
+
+    Ok(entries)
 }

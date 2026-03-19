@@ -769,6 +769,78 @@ impl Catalog {
         &self.conn
     }
 
+    // ===== CRASH RECOVERY & MAINTENANCE =====
+
+    /// Verify database integrity using SQLite's PRAGMA integrity_check
+    ///
+    /// # Returns
+    /// * `Ok(true)` - Database is intact
+    /// * `Ok(false)` - Database has integrity issues
+    /// * `Err(_)` - Failed to run integrity check
+    pub fn verify_integrity(&self) -> Result<bool> {
+        let result: String = self.conn.query_row(
+            "PRAGMA integrity_check",
+            [],
+            |row| row.get(0),
+        )?;
+
+        Ok(result == "ok")
+    }
+
+    /// Vacuum the database to reclaim space after deletes
+    pub fn vacuum(&self) -> Result<()> {
+        self.conn.execute_batch("VACUUM")?;
+        Ok(())
+    }
+
+    /// Create a backup of the database to the specified path
+    ///
+    /// Uses SQLite's backup API to create a consistent backup
+    pub fn create_backup(&self, backup_path: &Path) -> Result<()> {
+        use rusqlite::backup::Backup;
+        use std::time::Duration;
+
+        // Open backup database
+        let mut backup_conn = Connection::open(backup_path)?;
+
+        // Run backup
+        let backup = Backup::new(&self.conn, &mut backup_conn)?;
+        backup.run_to_completion(5, Duration::from_millis(250), None)?;
+
+        Ok(())
+    }
+
+    /// Repair catalog if integrity check fails
+    ///
+    /// # Arguments
+    /// * `backup_dir` - Directory to store backup of corrupted database
+    ///
+    /// # Returns
+    /// * `Ok(true)` - Repair was performed
+    /// * `Ok(false)` - No repair needed (database was healthy)
+    /// * `Err(_)` - Repair failed
+    pub fn repair_if_needed(&mut self, backup_dir: &Path) -> Result<bool> {
+        // Check integrity first
+        if self.verify_integrity()? {
+            return Ok(false); // No repair needed
+        }
+
+        // Database is corrupted - create backup
+        std::fs::create_dir_all(backup_dir)?;
+
+        let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S");
+        let backup_path = backup_dir.join(format!("corrupted_{}.db", timestamp));
+
+        // Try to backup what we can
+        let _ = self.create_backup(&backup_path);
+
+        // Try to recover: re-create schema
+        // Note: This is a basic recovery - in production you'd want more sophisticated recovery
+        self.initialize()?;
+
+        Ok(true)
+    }
+
     /// Get count of rejected photos
     pub fn get_rejected_count(&self) -> Result<u32> {
         let count: i64 = self.conn.query_row(
@@ -1414,5 +1486,68 @@ mod tests {
         let results = catalog.search("Canon", 100).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].camera_make, Some("Canon".to_string()));
+    }
+
+    #[test]
+    fn test_integrity_on_fresh_catalog() {
+        let catalog = Catalog::in_memory().unwrap();
+        assert!(catalog.verify_integrity().unwrap());
+    }
+
+    #[test]
+    fn test_backup_creates_file() {
+        use std::env;
+
+        let catalog = Catalog::in_memory().unwrap();
+
+        // Insert test data
+        let id = Uuid::new_v4().to_string();
+        let now = Utc::now().to_rfc3339();
+        catalog.conn.execute(
+            "INSERT INTO photos (id, file_path, file_name, file_size, date_imported)
+             VALUES (?, ?, ?, ?, ?)",
+            params![&id, "/test.jpg", "test.jpg", 1000, &now],
+        ).unwrap();
+
+        // Create backup
+        let temp_dir = env::temp_dir();
+        let backup_path = temp_dir.join(format!("test_backup_{}.db", Uuid::new_v4()));
+
+        catalog.create_backup(&backup_path).unwrap();
+
+        // Verify backup file exists
+        assert!(backup_path.exists());
+
+        // Verify backup can be opened and has data
+        let backup_catalog = Catalog::open(&backup_path).unwrap();
+        assert_eq!(backup_catalog.photo_count().unwrap(), 1);
+
+        // Clean up
+        let _ = std::fs::remove_file(backup_path);
+    }
+
+    #[test]
+    fn test_vacuum_succeeds() {
+        let catalog = Catalog::in_memory().unwrap();
+        let now = Utc::now().to_rfc3339();
+
+        // Insert photos
+        for i in 0..10 {
+            let id = Uuid::new_v4().to_string();
+            catalog.conn.execute(
+                "INSERT INTO photos (id, file_path, file_name, file_size, date_imported)
+                 VALUES (?, ?, ?, ?, ?)",
+                params![&id, format!("/test{}.jpg", i), format!("test{}.jpg", i), 1000, &now],
+            ).unwrap();
+        }
+
+        // Delete some
+        catalog.conn.execute("DELETE FROM photos WHERE file_name LIKE 'test0%'", []).unwrap();
+
+        // Vacuum should succeed
+        catalog.vacuum().unwrap();
+
+        // Verify data is still intact
+        assert!(catalog.photo_count().unwrap() > 0);
     }
 }
