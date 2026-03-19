@@ -2,6 +2,9 @@
 //!
 //! SQLite-based catalog with FTS5 search, collections, keywords.
 
+pub mod db;
+pub mod models;
+
 pub fn version() -> &'static str {
     env!("CARGO_PKG_VERSION")
 }
@@ -102,56 +105,9 @@ pub mod schema {
     ];
 }
 
-pub mod db {
-    use rusqlite::Connection;
-    use anyhow::Result;
-
-    pub struct Catalog {
-        conn: Connection,
-    }
-
-    impl Catalog {
-        /// Open or create a catalog at the given path.
-        pub fn open(path: &std::path::Path) -> Result<Self> {
-            let conn = Connection::open(path)?;
-            conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
-            let catalog = Self { conn };
-            catalog.initialize()?;
-            Ok(catalog)
-        }
-
-        /// Create an in-memory catalog (for testing).
-        pub fn in_memory() -> Result<Self> {
-            let conn = Connection::open_in_memory()?;
-            conn.execute_batch("PRAGMA foreign_keys=ON;")?;
-            let catalog = Self { conn };
-            catalog.initialize()?;
-            Ok(catalog)
-        }
-
-        fn initialize(&self) -> Result<()> {
-            self.conn.execute_batch(super::schema::CREATE_MIGRATIONS)?;
-            self.conn.execute_batch(super::schema::CREATE_PHOTOS)?;
-            self.conn.execute_batch(super::schema::CREATE_COLLECTIONS)?;
-            self.conn.execute_batch(super::schema::CREATE_KEYWORDS)?;
-            self.conn.execute_batch(super::schema::CREATE_PHOTO_KEYWORDS)?;
-            self.conn.execute_batch(super::schema::CREATE_EDITS)?;
-            for index in super::schema::INDEXES {
-                self.conn.execute_batch(index)?;
-            }
-            Ok(())
-        }
-
-        pub fn photo_count(&self) -> Result<u64> {
-            let count: u64 = self.conn.query_row(
-                "SELECT COUNT(*) FROM photos",
-                [],
-                |row| row.get(0),
-            )?;
-            Ok(count)
-        }
-    }
-}
+// Re-export main types for convenience
+pub use db::Catalog;
+pub use models::{ImportResult, PhotoFilter, PhotoRecord, SortOrder};
 
 #[cfg(test)]
 mod tests {
