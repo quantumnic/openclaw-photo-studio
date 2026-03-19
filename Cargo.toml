@@ -19,3 +19,8 @@ uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 log = "0.4"
 tracing = "0.1"
+rawloader = "0.37"
+image = "0.25"
+rayon = "1"
+byteorder = "1"
+half = "2"

@@ -7,38 +7,13 @@ pub fn version() -> &'static str {
     env!("CARGO_PKG_VERSION")
 }
 
-pub mod raw {
-    //! RAW file decoding (CR3, ARW, NEF, RAF, DNG, ORF, RW2)
-    //! Phase 1: Placeholder — real implementation in Phase 1-2
+pub mod raw;
 
-    #[derive(Debug, Clone)]
-    pub struct RawImage {
-        pub width: u32,
-        pub height: u32,
-        pub bayer_data: Vec<u16>,
-        pub camera_make: Option<String>,
-        pub camera_model: Option<String>,
-    }
-
-    #[derive(Debug, thiserror::Error)]
-    pub enum RawDecodeError {
-        #[error("Unsupported format: {0}")]
-        UnsupportedFormat(String),
-        #[error("IO error: {0}")]
-        Io(#[from] std::io::Error),
-        #[error("Corrupt file: {0}")]
-        Corrupt(String),
-    }
-
-    /// Decode a RAW file from disk.
-    /// Returns a RawImage with demosaiced pixel data.
-    pub fn decode(_path: &std::path::Path) -> Result<RawImage, RawDecodeError> {
-        // TODO: Phase 1 — implement rawloader integration
-        Err(RawDecodeError::UnsupportedFormat(
-            "RAW decode not yet implemented — coming in Phase 1".to_string(),
-        ))
-    }
-}
+pub use raw::{
+    decode, CfaPattern, RawDecodeError, RawImage,
+    demosaic::{demosaic, DemosaicAlgorithm, RgbImage},
+    thumbnail::{extract_thumbnail, quick_thumbnail, ThumbnailError},
+};
 
 pub mod pipeline {
     //! GPU-accelerated processing pipeline (wgpu)
@@ -99,6 +74,8 @@ pub mod cache {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
+    use std::path::Path;
 
     #[test]
     fn test_version() {
@@ -110,5 +87,95 @@ mod tests {
         let settings = pipeline::PipelineSettings::default();
         assert_eq!(settings.exposure, 0.0);
         assert_eq!(settings.contrast, 0);
+    }
+
+    #[test]
+    fn test_decode_missing_file() {
+        let result = raw::decode(Path::new("/tmp/nonexistent_ocps_test.dng"));
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            raw::RawDecodeError::Io(_)
+        ));
+    }
+
+    #[test]
+    fn test_decode_invalid_file() {
+        // Create a temp file with non-RAW content
+        let temp_path = "/tmp/ocps_test_not_raw.txt";
+        {
+            let mut file = std::fs::File::create(temp_path).unwrap();
+            writeln!(file, "This is not a RAW file, just plain text").unwrap();
+        }
+
+        let result = raw::decode(Path::new(temp_path));
+        assert!(result.is_err());
+
+        // Cleanup
+        let _ = std::fs::remove_file(temp_path);
+    }
+
+    #[test]
+    fn test_demosaic_synthetic_bayer() {
+        // Create a small synthetic Bayer array
+        let test_raw = raw::RawImage {
+            width: 4,
+            height: 4,
+            data: vec![
+                100, 200, 150, 250,
+                300, 400, 350, 450,
+                500, 600, 550, 650,
+                700, 800, 750, 850,
+            ],
+            camera_make: Some("Test".to_string()),
+            camera_model: Some("Synthetic".to_string()),
+            wb_coeffs: [1.0, 1.0, 1.0, 1.0],
+            black_level: [0, 0, 0, 0],
+            white_level: 1000,
+            cfa_pattern: raw::CfaPattern::RGGB,
+            iso: None,
+            exposure_time: None,
+            aperture: None,
+        };
+
+        // Test bilinear demosaic
+        let rgb = raw::demosaic::demosaic(&test_raw, raw::demosaic::DemosaicAlgorithm::Bilinear);
+        assert_eq!(rgb.width, 4);
+        assert_eq!(rgb.height, 4);
+        assert_eq!(rgb.data.len(), 4 * 4 * 3); // 4x4 pixels, 3 channels each
+
+        // Verify all RGB values are within valid range
+        for &value in &rgb.data {
+            assert!(value <= 255);
+        }
+    }
+
+    #[test]
+    fn test_thumbnail_extraction_fallback() {
+        // This test verifies that thumbnail extraction fails gracefully
+        // on non-existent files
+        let result = raw::thumbnail::extract_thumbnail(
+            Path::new("/tmp/nonexistent_test_raw.dng"),
+            256,
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_cfa_patterns() {
+        use raw::CfaPattern;
+
+        // Test all CFA pattern variants exist
+        let patterns = [
+            CfaPattern::RGGB,
+            CfaPattern::BGGR,
+            CfaPattern::GBRG,
+            CfaPattern::GRBG,
+        ];
+
+        for pattern in patterns {
+            // Just verify they're valid enum values
+            let _debug_str = format!("{:?}", pattern);
+        }
     }
 }

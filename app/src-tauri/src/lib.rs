@@ -12,6 +12,7 @@ pub fn run() {
             commands::greet,
             commands::get_version,
             commands::get_catalog_info,
+            commands::decode_raw_info,
         ])
         .setup(|app| {
             #[cfg(debug_assertions)]

@@ -11,3 +11,8 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 anyhow = { workspace = true }
 log = { workspace = true }
+rawloader = { workspace = true }
+image = { workspace = true }
+rayon = { workspace = true }
+byteorder = { workspace = true }
+half = { workspace = true }

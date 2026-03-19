@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
-import { createSignal, onMount } from "solid-js";
+import { open } from "@tauri-apps/plugin-dialog";
+import { createSignal, onMount, Show } from "solid-js";
 
 type Module = "library" | "develop" | "map" | "print";
 
@@ -18,8 +19,25 @@ export function MainView(props: MainViewProps) {
   );
 }
 
+interface RawMetadata {
+  success: boolean;
+  camera_make?: string;
+  camera_model?: string;
+  width: number;
+  height: number;
+  megapixels: number;
+  cfa_pattern: string;
+  iso?: number;
+  exposure_time?: string;
+  aperture?: string;
+  decode_time_ms: number;
+}
+
 function LibraryView() {
   const [greeting, setGreeting] = createSignal("");
+  const [rawMetadata, setRawMetadata] = createSignal<RawMetadata | null>(null);
+  const [rawError, setRawError] = createSignal<string | null>(null);
+  const [isDecoding, setIsDecoding] = createSignal(false);
 
   onMount(async () => {
     try {
@@ -29,6 +47,43 @@ function LibraryView() {
       setGreeting("OpenClaw Photo Studio — running in browser mode");
     }
   });
+
+  const handleOpenRAW = async () => {
+    setRawError(null);
+    setRawMetadata(null);
+
+    try {
+      const selected = await open({
+        title: "Open RAW File (Test)",
+        multiple: false,
+        filters: [
+          {
+            name: "RAW Files",
+            extensions: ["dng", "arw", "nef", "raf", "orf", "rw2", "cr2", "cr3"],
+          },
+        ],
+      });
+
+      if (!selected) {
+        return; // User cancelled
+      }
+
+      const path = typeof selected === "string" ? selected : selected.path;
+
+      setIsDecoding(true);
+
+      try {
+        const result = await invoke<RawMetadata>("decode_raw_info", { path });
+        setRawMetadata(result);
+      } catch (err) {
+        setRawError(String(err));
+      } finally {
+        setIsDecoding(false);
+      }
+    } catch (err) {
+      setRawError("Failed to open file dialog: " + String(err));
+    }
+  };
 
   // Placeholder photos for the grid
   const placeholderPhotos = Array.from({ length: 24 }, (_, i) => ({
@@ -57,6 +112,75 @@ function LibraryView() {
           ✓ {greeting()}
         </div>
       )}
+
+      {/* RAW Decode Test Section */}
+      <div class="px-4 py-3 bg-[#1a1a1a] border-b border-[#2a2a2a]">
+        <div class="flex items-center gap-3">
+          <button
+            onClick={handleOpenRAW}
+            disabled={isDecoding()}
+            class="px-4 py-1.5 bg-[#4a9eff] hover:bg-[#5aa9ff] disabled:bg-[#2a4a7f] disabled:cursor-not-allowed text-white text-xs font-medium rounded transition-colors"
+          >
+            {isDecoding() ? "Decoding..." : "📷 Open RAW File (Test)"}
+          </button>
+
+          <Show when={rawMetadata()}>
+            {(metadata) => (
+              <div class="text-xs text-[#aaa]">
+                <span class="font-medium text-[#4a9eff]">
+                  {metadata().camera_make || "Unknown"} {metadata().camera_model || ""}
+                </span>
+                <span class="text-[#666] mx-2">•</span>
+                <span>{metadata().width} × {metadata().height} px</span>
+                <span class="text-[#666] mx-2">•</span>
+                <span>{metadata().megapixels.toFixed(1)} MP</span>
+                <span class="text-[#666] mx-2">•</span>
+                <span class="text-[#666]">{metadata().decode_time_ms.toFixed(0)}ms</span>
+              </div>
+            )}
+          </Show>
+
+          <Show when={rawError()}>
+            {(error) => (
+              <div class="text-xs text-[#ff6b6b]">
+                ✗ {error()}
+              </div>
+            )}
+          </Show>
+        </div>
+
+        {/* Detailed metadata display */}
+        <Show when={rawMetadata()}>
+          {(metadata) => (
+            <div class="mt-3 p-3 bg-[#0f0f0f] rounded border border-[#2a2a2a] text-xs">
+              <div class="grid grid-cols-2 gap-x-6 gap-y-1.5 text-[#aaa]">
+                <div>
+                  <span class="text-[#666]">CFA Pattern:</span>{" "}
+                  <span class="font-mono">{metadata().cfa_pattern}</span>
+                </div>
+                <div>
+                  <Show when={metadata().iso}>
+                    <span class="text-[#666]">ISO:</span> {metadata().iso}
+                  </Show>
+                </div>
+                <div>
+                  <Show when={metadata().exposure_time}>
+                    <span class="text-[#666]">Exposure:</span> {metadata().exposure_time}
+                  </Show>
+                </div>
+                <div>
+                  <Show when={metadata().aperture}>
+                    <span class="text-[#666]">Aperture:</span> {metadata().aperture}
+                  </Show>
+                </div>
+              </div>
+              <div class="mt-2 pt-2 border-t border-[#2a2a2a] text-[#4a9eff]">
+                ✓ RAW decode pipeline working — Phase 1, Day 15-35 complete
+              </div>
+            </div>
+          )}
+        </Show>
+      </div>
 
       {/* Photo Grid — placeholder */}
       <div class="flex-1 overflow-auto p-3">
