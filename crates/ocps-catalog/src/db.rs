@@ -372,6 +372,85 @@ impl Catalog {
             Err(e) => Err(e.into()),
         }
     }
+
+    /// Create a smart collection with rules
+    pub fn create_smart_collection(&self, name: &str, rules: &SmartCollectionRules) -> Result<String> {
+        let id = Uuid::new_v4().to_string();
+        let rules_json = serde_json::to_string(rules)?;
+
+        self.conn.execute(
+            "INSERT INTO collections (id, name, type, query) VALUES (?, ?, 'smart', ?)",
+            params![&id, name, &rules_json],
+        )?;
+
+        Ok(id)
+    }
+
+    /// Evaluate a smart collection and return matching photo IDs
+    pub fn evaluate_smart_collection(&self, rules: &SmartCollectionRules) -> Result<Vec<String>> {
+        let sql = self.build_smart_collection_query(rules);
+        let mut stmt = self.conn.prepare(&sql)?;
+        let photo_ids = stmt
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<rusqlite::Result<Vec<String>>>()?;
+        Ok(photo_ids)
+    }
+
+    fn build_smart_collection_query(&self, rules: &SmartCollectionRules) -> String {
+        let mut conditions = Vec::new();
+
+        for rule in &rules.rules {
+            let condition = match rule.op.as_str() {
+                "gte" => {
+                    format!("{} >= {}", rule.field, rule.value)
+                }
+                "lte" => {
+                    format!("{} <= {}", rule.field, rule.value)
+                }
+                "eq" => {
+                    // String equality needs quotes
+                    if rule.field == "flag" || rule.field.ends_with("_make") || rule.field.ends_with("_model") {
+                        format!("{} = '{}'", rule.field, rule.value)
+                    } else {
+                        format!("{} = {}", rule.field, rule.value)
+                    }
+                }
+                "contains" => {
+                    format!("{} LIKE '%{}%'", rule.field, rule.value)
+                }
+                "in_last_days" => {
+                    let days: i32 = rule.value.parse().unwrap_or(7);
+                    format!("{} >= datetime('now', '-{} days')", rule.field, days)
+                }
+                _ => "1=1".to_string(), // Default to true for unknown operators
+            };
+            conditions.push(condition);
+        }
+
+        let connector = if rules.match_all { " AND " } else { " OR " };
+        let where_clause = if conditions.is_empty() {
+            "1=1".to_string()
+        } else {
+            conditions.join(connector)
+        };
+
+        format!("SELECT id FROM photos WHERE {}", where_clause)
+    }
+}
+
+/// Smart collection rule
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SmartRule {
+    pub field: String,  // "rating", "flag", "camera_make", "date_taken"
+    pub op: String,     // "gte", "lte", "eq", "contains", "in_last_days"
+    pub value: String,
+}
+
+/// Smart collection rules container
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SmartCollectionRules {
+    pub match_all: bool,
+    pub rules: Vec<SmartRule>,
 }
 
 #[cfg(test)]
@@ -449,5 +528,115 @@ mod tests {
 
         let loaded = catalog.load_edit(&id).unwrap();
         assert_eq!(loaded, Some(edit_data.to_string()));
+    }
+
+    #[test]
+    fn test_smart_collection_rating_filter() {
+        let catalog = Catalog::in_memory().unwrap();
+        let now = Utc::now().to_rfc3339();
+
+        // Insert photos with different ratings
+        for rating in 1..=5 {
+            let id = Uuid::new_v4().to_string();
+            catalog
+                .conn
+                .execute(
+                    "INSERT INTO photos (id, file_path, file_name, file_size, date_imported, rating)
+                     VALUES (?, ?, ?, ?, ?, ?)",
+                    params![&id, format!("/test{}.jpg", rating), format!("test{}.jpg", rating), 1000, &now, rating],
+                )
+                .unwrap();
+        }
+
+        // Filter rating >= 4
+        let rules = SmartCollectionRules {
+            match_all: true,
+            rules: vec![SmartRule {
+                field: "rating".to_string(),
+                op: "gte".to_string(),
+                value: "4".to_string(),
+            }],
+        };
+
+        let results = catalog.evaluate_smart_collection(&rules).unwrap();
+        assert_eq!(results.len(), 2); // Should get rating 4 and 5
+    }
+
+    #[test]
+    fn test_smart_collection_flag_filter() {
+        let catalog = Catalog::in_memory().unwrap();
+        let now = Utc::now().to_rfc3339();
+
+        // Insert photos with different flags
+        for (i, flag) in ["pick", "reject", ""].iter().enumerate() {
+            let id = Uuid::new_v4().to_string();
+            catalog
+                .conn
+                .execute(
+                    "INSERT INTO photos (id, file_path, file_name, file_size, date_imported, flag)
+                     VALUES (?, ?, ?, ?, ?, ?)",
+                    params![&id, format!("/test{}.jpg", i), format!("test{}.jpg", i), 1000, &now, flag],
+                )
+                .unwrap();
+        }
+
+        // Filter flag = pick
+        let rules = SmartCollectionRules {
+            match_all: true,
+            rules: vec![SmartRule {
+                field: "flag".to_string(),
+                op: "eq".to_string(),
+                value: "pick".to_string(),
+            }],
+        };
+
+        let results = catalog.evaluate_smart_collection(&rules).unwrap();
+        assert_eq!(results.len(), 1); // Should get only "pick"
+    }
+
+    #[test]
+    fn test_smart_collection_and_rules() {
+        let catalog = Catalog::in_memory().unwrap();
+        let now = Utc::now().to_rfc3339();
+
+        // Insert test photos
+        let test_cases = [
+            (5, "pick"),   // Should match
+            (4, "pick"),   // Should match
+            (5, "reject"), // Should not match (wrong flag)
+            (3, "pick"),   // Should not match (rating too low)
+        ];
+
+        for (i, (rating, flag)) in test_cases.iter().enumerate() {
+            let id = Uuid::new_v4().to_string();
+            catalog
+                .conn
+                .execute(
+                    "INSERT INTO photos (id, file_path, file_name, file_size, date_imported, rating, flag)
+                     VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    params![&id, format!("/test{}.jpg", i), format!("test{}.jpg", i), 1000, &now, rating, flag],
+                )
+                .unwrap();
+        }
+
+        // Filter rating >= 4 AND flag = pick
+        let rules = SmartCollectionRules {
+            match_all: true,
+            rules: vec![
+                SmartRule {
+                    field: "rating".to_string(),
+                    op: "gte".to_string(),
+                    value: "4".to_string(),
+                },
+                SmartRule {
+                    field: "flag".to_string(),
+                    op: "eq".to_string(),
+                    value: "pick".to_string(),
+                },
+            ],
+        };
+
+        let results = catalog.evaluate_smart_collection(&rules).unwrap();
+        assert_eq!(results.len(), 2); // Should get first two photos only
     }
 }

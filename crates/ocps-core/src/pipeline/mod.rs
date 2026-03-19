@@ -5,10 +5,12 @@
 pub mod color;
 pub mod process;
 pub mod types;
+pub mod lens;
 
 pub use types::{
     ColorGrading, ColorGradingSettings, CropSettings, CurvePoint, EditRecipe, HslAdjustments,
-    NoiseReductionSettings, RgbImage16, RgbImage8, SharpeningSettings, ToneCurve, WhiteBalance,
+    LensCorrections, NoiseReductionSettings, RgbImage16, RgbImage8, SharpeningSettings, ToneCurve,
+    WhiteBalance,
 };
 
 use color::u16_linear_to_u8_srgb;
@@ -81,6 +83,29 @@ impl ImageProcessor {
             working.height,
             &recipe.color_grading_new,
         );
+
+        // Step 6.7: Lens corrections (distortion and vignetting)
+        if !recipe.lens_corrections.is_identity() {
+            // Apply distortion first
+            if recipe.lens_corrections.distortion != 0.0 {
+                working.data = lens::apply_distortion(
+                    &working.data,
+                    working.width,
+                    working.height,
+                    recipe.lens_corrections.distortion,
+                );
+            }
+
+            // Apply vignetting correction (in place)
+            if recipe.lens_corrections.vignetting != 0.0 {
+                lens::apply_vignetting_correction(
+                    &mut working.data,
+                    working.width,
+                    working.height,
+                    recipe.lens_corrections.vignetting,
+                );
+            }
+        }
 
         // Step 7: Sharpening (should be near the end)
         if recipe.sharpening.amount > 0 {

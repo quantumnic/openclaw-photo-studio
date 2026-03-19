@@ -217,6 +217,35 @@ impl Default for ColorGrading {
     }
 }
 
+/// Lens correction settings
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct LensCorrections {
+    pub distortion: f32,         // -100 to +100
+    pub vignetting: f32,         // -100 to +100
+    pub chromatic_aberration: bool,
+    pub profile_name: Option<String>,
+}
+
+impl Default for LensCorrections {
+    fn default() -> Self {
+        Self {
+            distortion: 0.0,
+            vignetting: 0.0,
+            chromatic_aberration: false,
+            profile_name: None,
+        }
+    }
+}
+
+impl LensCorrections {
+    pub fn is_identity(&self) -> bool {
+        self.distortion == 0.0
+            && self.vignetting == 0.0
+            && !self.chromatic_aberration
+            && self.profile_name.is_none()
+    }
+}
+
 /// Old color grading settings (kept for compatibility)
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ColorGradingSettings {
@@ -268,6 +297,7 @@ pub struct EditRecipe {
     pub tone_curve_rgb: ToneCurve,
     pub hsl: HslAdjustments,
     pub color_grading_new: ColorGrading,
+    pub lens_corrections: LensCorrections,
 }
 
 impl EditRecipe {
@@ -300,7 +330,10 @@ impl EditRecipe {
             && self.noise_reduction.luminance == 0
             && self.noise_reduction.color == 0;
 
-        basic_identity && wb_identity && geo_identity && detail_identity
+        // Check lens corrections
+        let lens_identity = self.lens_corrections.is_identity();
+
+        basic_identity && wb_identity && geo_identity && detail_identity && lens_identity
     }
 }
 
