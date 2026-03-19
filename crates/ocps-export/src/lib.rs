@@ -1,6 +1,10 @@
 //! ocps-export — Export engine
 //! JPEG, TIFF, PNG, WebP, AVIF, HEIF, DNG
 
+pub mod jpeg;
+pub mod png;
+pub mod resize;
+
 pub fn version() -> &'static str {
     env!("CARGO_PKG_VERSION")
 }

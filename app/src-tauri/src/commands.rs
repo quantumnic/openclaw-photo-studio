@@ -1,15 +1,17 @@
 use std::sync::Mutex;
 use tauri::State;
 
-/// Application state holding the catalog
+/// Application state holding the catalog and edit clipboard
 pub struct AppState {
     pub catalog: Mutex<Option<ocps_catalog::Catalog>>,
+    pub clipboard: Mutex<Option<ocps_core::EditClipboard>>,
 }
 
 impl AppState {
     pub fn new() -> Self {
         Self {
             catalog: Mutex::new(None),
+            clipboard: Mutex::new(None),
         }
     }
 }
@@ -294,4 +296,276 @@ pub fn decode_raw_info(path: String) -> Result<serde_json::Value, String> {
         })),
         Err(e) => Err(format!("{:?}", e)),
     }
+}
+
+/// Save edit recipe for a photo
+#[tauri::command]
+pub fn save_edit_recipe(
+    state: State<AppState>,
+    photo_id: String,
+    recipe: serde_json::Value,
+) -> Result<(), String> {
+    let recipe_json = recipe.to_string();
+    let catalog_lock = state.catalog.lock().unwrap();
+
+    let catalog = catalog_lock
+        .as_ref()
+        .ok_or("No catalog open".to_string())?;
+
+    catalog
+        .save_edit(&photo_id, &recipe_json)
+        .map_err(|e| format!("Failed to save edit: {}", e))
+}
+
+/// Load edit recipe for a photo
+#[tauri::command]
+pub fn load_edit_recipe(
+    state: State<AppState>,
+    photo_id: String,
+) -> Result<serde_json::Value, String> {
+    let catalog_lock = state.catalog.lock().unwrap();
+
+    let catalog = catalog_lock
+        .as_ref()
+        .ok_or("No catalog open".to_string())?;
+
+    match catalog.load_edit(&photo_id) {
+        Ok(Some(json)) => {
+            serde_json::from_str(&json).map_err(|e| format!("Failed to parse recipe: {}", e))
+        }
+        Ok(None) => {
+            // Return default recipe
+            let default = ocps_core::EditRecipe::default();
+            serde_json::to_value(default).map_err(|e| format!("Failed to serialize: {}", e))
+        }
+        Err(e) => Err(format!("Failed to load edit: {}", e)),
+    }
+}
+
+/// Copy edit settings from a photo
+#[tauri::command]
+pub fn copy_edit(
+    state: State<AppState>,
+    photo_id: String,
+    modules: Vec<String>,
+) -> Result<serde_json::Value, String> {
+    // Load recipe from catalog
+    let catalog_lock = state.catalog.lock().unwrap();
+    let catalog = catalog_lock
+        .as_ref()
+        .ok_or("No catalog open".to_string())?;
+
+    let recipe_json = catalog
+        .load_edit(&photo_id)
+        .map_err(|e| format!("Failed to load edit: {}", e))?;
+
+    let recipe: ocps_core::EditRecipe = if let Some(json) = recipe_json {
+        serde_json::from_str(&json).map_err(|e| format!("Failed to parse recipe: {}", e))?
+    } else {
+        ocps_core::EditRecipe::default()
+    };
+
+    // Convert module names to EditModule enum
+    let edit_modules: Vec<ocps_core::EditModule> = if modules.is_empty() {
+        ocps_core::EditModule::safe_defaults()
+    } else {
+        modules
+            .iter()
+            .filter_map(|m| match m.as_str() {
+                "white_balance" => Some(ocps_core::EditModule::WhiteBalance),
+                "exposure" => Some(ocps_core::EditModule::Exposure),
+                "contrast" => Some(ocps_core::EditModule::Contrast),
+                "highlights" => Some(ocps_core::EditModule::Highlights),
+                "shadows" => Some(ocps_core::EditModule::Shadows),
+                "whites" => Some(ocps_core::EditModule::Whites),
+                "blacks" => Some(ocps_core::EditModule::Blacks),
+                "clarity" => Some(ocps_core::EditModule::Clarity),
+                "dehaze" => Some(ocps_core::EditModule::Dehaze),
+                "vibrance" => Some(ocps_core::EditModule::Vibrance),
+                "saturation" => Some(ocps_core::EditModule::Saturation),
+                "sharpening" => Some(ocps_core::EditModule::Sharpening),
+                "noise_reduction" => Some(ocps_core::EditModule::NoiseReduction),
+                "crop" => Some(ocps_core::EditModule::Crop),
+                "color_grading" => Some(ocps_core::EditModule::ColorGrading),
+                _ => None,
+            })
+            .collect()
+    };
+
+    // Create clipboard
+    let clipboard = ocps_core::EditCopyPaste::copy_selected(&photo_id, &recipe, edit_modules);
+
+    // Store in state
+    let mut clipboard_lock = state.clipboard.lock().unwrap();
+    *clipboard_lock = Some(clipboard.clone());
+
+    // Return clipboard as JSON
+    serde_json::to_value(clipboard).map_err(|e| format!("Failed to serialize clipboard: {}", e))
+}
+
+/// Paste edit settings to one or more photos
+#[tauri::command]
+pub fn paste_edit(
+    state: State<AppState>,
+    photo_ids: Vec<String>,
+    modules: Vec<String>,
+) -> Result<u32, String> {
+    // Get clipboard
+    let clipboard_lock = state.clipboard.lock().unwrap();
+    let clipboard = clipboard_lock
+        .as_ref()
+        .ok_or("No edit settings copied".to_string())?
+        .clone();
+    drop(clipboard_lock);
+
+    // Convert module names if provided
+    let paste_modules: Vec<ocps_core::EditModule> = if modules.is_empty() {
+        clipboard.modules.clone()
+    } else {
+        modules
+            .iter()
+            .filter_map(|m| match m.as_str() {
+                "white_balance" => Some(ocps_core::EditModule::WhiteBalance),
+                "exposure" => Some(ocps_core::EditModule::Exposure),
+                "contrast" => Some(ocps_core::EditModule::Contrast),
+                "highlights" => Some(ocps_core::EditModule::Highlights),
+                "shadows" => Some(ocps_core::EditModule::Shadows),
+                "whites" => Some(ocps_core::EditModule::Whites),
+                "blacks" => Some(ocps_core::EditModule::Blacks),
+                "clarity" => Some(ocps_core::EditModule::Clarity),
+                "dehaze" => Some(ocps_core::EditModule::Dehaze),
+                "vibrance" => Some(ocps_core::EditModule::Vibrance),
+                "saturation" => Some(ocps_core::EditModule::Saturation),
+                "sharpening" => Some(ocps_core::EditModule::Sharpening),
+                "noise_reduction" => Some(ocps_core::EditModule::NoiseReduction),
+                "crop" => Some(ocps_core::EditModule::Crop),
+                "color_grading" => Some(ocps_core::EditModule::ColorGrading),
+                _ => None,
+            })
+            .collect()
+    };
+
+    // Get catalog
+    let catalog_lock = state.catalog.lock().unwrap();
+    let catalog = catalog_lock
+        .as_ref()
+        .ok_or("No catalog open".to_string())?;
+
+    let mut count = 0;
+
+    // Apply to each photo
+    for photo_id in &photo_ids {
+        // Load current recipe
+        let recipe_json = catalog
+            .load_edit(photo_id)
+            .map_err(|e| format!("Failed to load edit: {}", e))?;
+
+        let mut recipe: ocps_core::EditRecipe = if let Some(json) = recipe_json {
+            serde_json::from_str(&json)
+                .map_err(|e| format!("Failed to parse recipe: {}", e))?
+        } else {
+            ocps_core::EditRecipe::default()
+        };
+
+        // Apply paste
+        ocps_core::EditCopyPaste::paste_selected(&clipboard, &mut recipe, &paste_modules);
+
+        // Save back
+        let recipe_json =
+            serde_json::to_string(&recipe).map_err(|e| format!("Failed to serialize: {}", e))?;
+        catalog
+            .save_edit(photo_id, &recipe_json)
+            .map_err(|e| format!("Failed to save: {}", e))?;
+
+        count += 1;
+    }
+
+    Ok(count)
+}
+
+/// Reset edit settings for a photo
+#[tauri::command]
+pub fn reset_edit(state: State<AppState>, photo_id: String) -> Result<(), String> {
+    let catalog_lock = state.catalog.lock().unwrap();
+    let catalog = catalog_lock
+        .as_ref()
+        .ok_or("No catalog open".to_string())?;
+
+    let default = ocps_core::EditRecipe::default();
+    let recipe_json =
+        serde_json::to_string(&default).map_err(|e| format!("Failed to serialize: {}", e))?;
+
+    catalog
+        .save_edit(&photo_id, &recipe_json)
+        .map_err(|e| format!("Failed to save: {}", e))
+}
+
+/// Export a photo as JPEG
+#[tauri::command]
+pub fn export_photo_jpeg(
+    state: State<AppState>,
+    photo_id: String,
+    output_path: String,
+    quality: u32,
+    resize_long_edge: Option<u32>,
+) -> Result<serde_json::Value, String> {
+    let start = std::time::Instant::now();
+
+    // Get catalog
+    let catalog_lock = state.catalog.lock().unwrap();
+    let catalog = catalog_lock
+        .as_ref()
+        .ok_or("No catalog open".to_string())?;
+
+    // Load photo path
+    let photo = catalog
+        .get_photo(&photo_id)
+        .map_err(|e| format!("Failed to get photo: {}", e))?
+        .ok_or("Photo not found".to_string())?;
+
+    let path = std::path::Path::new(&photo.file_path);
+
+    // Decode RAW
+    let raw = ocps_core::decode(path).map_err(|e| format!("Failed to decode RAW: {:?}", e))?;
+
+    // Demosaic
+    let rgb = ocps_core::demosaic(&raw, ocps_core::DemosaicAlgorithm::Bilinear);
+
+    // Convert u8 → u16 for pipeline
+    let data_u16: Vec<u16> = rgb.data.iter().map(|&v| (v as u16) * 257).collect();
+
+    let image = ocps_core::RgbImage16::from_data(rgb.width, rgb.height, data_u16);
+
+    // Load edit recipe
+    let recipe_json = catalog
+        .load_edit(&photo_id)
+        .map_err(|e| format!("Failed to load edit: {}", e))?;
+
+    let recipe: ocps_core::EditRecipe = if let Some(json) = recipe_json {
+        serde_json::from_str(&json).map_err(|e| format!("Failed to parse recipe: {}", e))?
+    } else {
+        ocps_core::EditRecipe::default()
+    };
+
+    // Apply pipeline
+    let output = ocps_core::ImageProcessor::process(&image, &recipe);
+
+    // Resize if requested
+    let (final_data, final_width, final_height) = if let Some(long_edge) = resize_long_edge {
+        ocps_export::resize::resize_long_edge(&output.data, output.width, output.height, long_edge)
+    } else {
+        (output.data, output.width, output.height)
+    };
+
+    // Export JPEG
+    let output_p = std::path::Path::new(&output_path);
+    ocps_export::jpeg::export_jpeg(&final_data, final_width, final_height, quality, output_p)
+        .map_err(|e| format!("Failed to export JPEG: {:?}", e))?;
+
+    let duration_ms = start.elapsed().as_millis();
+
+    Ok(serde_json::json!({
+        "output_path": output_path,
+        "duration_ms": duration_ms,
+    }))
 }

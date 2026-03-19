@@ -76,6 +76,7 @@ mod tests {
     }
 }
 
+#[allow(dead_code)]
 trait OrDefault {
     fn keywords_or_default(&self) -> Vec<String>;
 }

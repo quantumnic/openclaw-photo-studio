@@ -42,18 +42,13 @@ pub struct PhotoFilter {
 }
 
 /// Sort order for photo queries
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub enum SortOrder {
+    #[default]
     DateTaken,
     FileName,
     Rating,
     FileSize,
-}
-
-impl Default for SortOrder {
-    fn default() -> Self {
-        SortOrder::DateTaken
-    }
 }
 
 impl SortOrder {

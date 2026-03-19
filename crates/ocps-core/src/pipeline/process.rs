@@ -103,8 +103,8 @@ pub fn apply_highlights_shadows(
         };
 
         // Apply adjustments per channel
-        for i in 0..3 {
-            let mut value = chunk[i] as f32;
+        for value_ref in chunk.iter_mut().take(3) {
+            let mut value = *value_ref as f32;
 
             // Apply shadows
             if shadow_weight > 0.0 {
@@ -126,7 +126,7 @@ pub fn apply_highlights_shadows(
                 value *= 1.0 + (whites_mult - 1.0) * white_weight;
             }
 
-            chunk[i] = value.clamp(0.0, 65535.0) as u16;
+            *value_ref = value.clamp(0.0, 65535.0) as u16;
         }
     }
 }
@@ -214,9 +214,9 @@ pub fn apply_clarity(image: &mut RgbImage16, amount: i32) {
             ];
 
             // Apply unsharp mask: original + strength * (original - blurred)
-            for i in 0..3 {
+            for (i, &avg_val) in avg.iter().enumerate() {
                 let original = image.data[idx + i] as f32;
-                let difference = original - avg[i];
+                let difference = original - avg_val;
                 let enhanced = original + strength * difference;
                 image.data[idx + i] = enhanced.clamp(0.0, 65535.0) as u16;
             }
@@ -269,9 +269,9 @@ pub fn apply_sharpening(image: &mut RgbImage16, amount: u32, radius: f32) {
             ];
 
             // Unsharp mask
-            for i in 0..3 {
+            for (i, &avg_val) in avg.iter().enumerate() {
                 let original = image.data[idx + i] as f32;
-                let difference = original - avg[i];
+                let difference = original - avg_val;
                 let sharpened = original + strength * difference;
                 image.data[idx + i] = sharpened.clamp(0.0, 65535.0) as u16;
             }

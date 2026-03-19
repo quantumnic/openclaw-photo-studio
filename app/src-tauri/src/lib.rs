@@ -20,6 +20,12 @@ pub fn run() {
             commands::update_flag,
             commands::update_color_label,
             commands::get_catalog_stats,
+            commands::save_edit_recipe,
+            commands::load_edit_recipe,
+            commands::copy_edit,
+            commands::paste_edit,
+            commands::reset_edit,
+            commands::export_photo_jpeg,
         ])
         .setup(|app| {
             #[cfg(debug_assertions)]

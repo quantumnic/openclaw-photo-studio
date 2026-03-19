@@ -4,7 +4,7 @@
 //! This module extracts them when available, or generates them via
 //! fast demosaicing + downscaling.
 
-use super::{decode, demosaic::{demosaic, DemosaicAlgorithm, RgbImage}, RawDecodeError};
+use super::{decode, demosaic::{demosaic, DemosaicAlgorithm}, RawDecodeError};
 use image::{DynamicImage, ImageBuffer, ImageFormat, Rgb};
 use std::io::Cursor;
 use std::path::Path;
@@ -48,9 +48,9 @@ pub fn extract_thumbnail(path: &Path, max_size: u32) -> Result<Vec<u8>, Thumbnai
 ///
 /// Many RAW formats (especially DNG, ARW, NEF) include full-resolution
 /// or medium-resolution JPEG previews embedded in the file.
-fn try_extract_embedded_thumbnail(path: &Path, max_size: u32) -> Result<Vec<u8>, ThumbnailError> {
+fn try_extract_embedded_thumbnail(path: &Path, _max_size: u32) -> Result<Vec<u8>, ThumbnailError> {
     // Use rawloader to get the full raw file structure
-    let raw_file = rawloader::decode_file(path)
+    let _raw_file = rawloader::decode_file(path)
         .map_err(|e| RawDecodeError::RawloaderError(e.to_string()))?;
 
     // Check if there's a thumbnail available

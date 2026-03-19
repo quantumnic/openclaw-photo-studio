@@ -152,9 +152,9 @@ pub fn demosaic_bilinear(raw: &RawImage) -> RgbImage {
             let center_value = get_normalized(xi, yi, center_color);
 
             // Initialize RGB values
-            let mut r = 0.0f32;
-            let mut g = 0.0f32;
-            let mut b = 0.0f32;
+            let r;
+            let g;
+            let b;
 
             match center_color {
                 0 => {

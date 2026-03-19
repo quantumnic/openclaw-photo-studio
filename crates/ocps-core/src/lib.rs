@@ -22,6 +22,10 @@ pub use pipeline::{
     RgbImage16, RgbImage8, SharpeningSettings, WhiteBalance,
 };
 
+pub mod edit;
+
+pub use edit::{EditClipboard, EditCopyPaste, EditModule};
+
 pub mod cache {
     //! Preview and thumbnail cache management
 

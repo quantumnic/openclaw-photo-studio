@@ -16,3 +16,4 @@ image = { workspace = true }
 rayon = { workspace = true }
 byteorder = { workspace = true }
 half = { workspace = true }
+chrono = { workspace = true }

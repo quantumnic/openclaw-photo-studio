@@ -1,12 +1,12 @@
 //! SQLite catalog database implementation
 
 use crate::models::{ImportResult, PhotoFilter, PhotoRecord, SortOrder};
-use anyhow::{Context, Result};
+use anyhow::Result;
 use chrono::Utc;
 use rusqlite::{params, Connection, Row};
 use sha2::{Digest, Sha256};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use uuid::Uuid;
 use walkdir::WalkDir;
 
@@ -212,7 +212,7 @@ impl Catalog {
 
         let mut stmt = self.conn.prepare(&sql)?;
         let photos = stmt
-            .query_map(&param_refs[..], |row| Self::row_to_photo(row))?
+            .query_map(&param_refs[..], Self::row_to_photo)?
             .collect::<Result<Vec<_>, _>>()?;
 
         Ok(photos)
@@ -240,7 +240,7 @@ impl Catalog {
     /// Get a single photo by ID
     pub fn get_photo(&self, id: &str) -> Result<Option<PhotoRecord>> {
         let mut stmt = self.conn.prepare("SELECT * FROM photos WHERE id = ?")?;
-        let result = stmt.query_row(params![id], |row| Self::row_to_photo(row));
+        let result = stmt.query_row(params![id], Self::row_to_photo);
 
         match result {
             Ok(photo) => Ok(Some(photo)),
@@ -314,7 +314,7 @@ impl Catalog {
         let photos = stmt
             .query_map(
                 params![&search_pattern, &search_pattern, &search_pattern],
-                |row| Self::row_to_photo(row),
+                Self::row_to_photo,
             )?
             .collect::<Result<Vec<_>, _>>()?;
 

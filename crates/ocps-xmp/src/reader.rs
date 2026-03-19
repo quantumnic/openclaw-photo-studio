@@ -33,15 +33,13 @@ pub fn read_sidecar(path: &Path) -> Result<(XmpDevelopSettings, IptcData), XmpEr
                 // Parse attributes
                 attributes.clear();
                 let decoder = xml_reader.decoder();
-                for attr in e.attributes() {
-                    if let Ok(attr) = attr {
-                        let key = String::from_utf8_lossy(attr.key.as_ref()).to_string();
-                        let value = attr
-                            .decode_and_unescape_value(decoder)
-                            .unwrap_or_default()
-                            .to_string();
-                        attributes.insert(key, value);
-                    }
+                for attr in e.attributes().flatten() {
+                    let key = String::from_utf8_lossy(attr.key.as_ref()).to_string();
+                    let value = attr
+                        .decode_and_unescape_value(decoder)
+                        .unwrap_or_default()
+                        .to_string();
+                    attributes.insert(key, value);
                 }
 
                 // Parse crs: namespace attributes (Adobe Camera Raw Settings)
@@ -110,7 +108,7 @@ fn parse_xmp_attributes(attrs: &HashMap<String, String>, develop: &mut XmpDevelo
     }
 }
 
-fn parse_dc_element(name: &str, _attrs: &HashMap<String, String>, iptc: &mut IptcData) {
+fn parse_dc_element(name: &str, _attrs: &HashMap<String, String>, _iptc: &mut IptcData) {
     // dc: namespace parsing
     // Title, description, keywords are typically in child elements
     // This is a simplified parser - full implementation would handle rdf:Seq etc.
