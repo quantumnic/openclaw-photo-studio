@@ -1,0 +1,269 @@
+use clap::{Parser, Subcommand};
+use anyhow::Result;
+use std::path::PathBuf;
+use ocps_catalog::{Catalog, PhotoFilter, SortOrder};
+
+#[derive(Parser)]
+#[command(name = "ocps", about = "OpenClaw Photo Studio CLI", version)]
+struct Cli {
+    #[command(subcommand)]
+    command: Commands,
+}
+
+#[derive(Subcommand)]
+enum Commands {
+    /// Import photos from a folder
+    Import {
+        /// Folder to import
+        path: PathBuf,
+
+        /// Catalog file
+        #[arg(long, default_value = "catalog.ocps")]
+        catalog: PathBuf,
+    },
+
+    /// Export photos
+    Export {
+        /// Photo ID or 'all'
+        photo: String,
+
+        /// Output directory
+        #[arg(short, long)]
+        output: PathBuf,
+
+        /// JPEG quality (1-100)
+        #[arg(short, long, default_value_t = 90)]
+        _quality: u32,
+
+        /// Resize long edge to pixels
+        #[arg(long)]
+        _resize: Option<u32>,
+
+        /// Catalog file
+        #[arg(long, default_value = "catalog.ocps")]
+        catalog: PathBuf,
+    },
+
+    /// Show catalog statistics
+    Stats {
+        /// Catalog file
+        #[arg(long, default_value = "catalog.ocps")]
+        catalog: PathBuf,
+    },
+
+    /// List photos
+    List {
+        /// Minimum rating filter
+        #[arg(long)]
+        rating: Option<u8>,
+
+        /// Flag filter: pick/reject/none
+        #[arg(long)]
+        flag: Option<String>,
+
+        /// Catalog file
+        #[arg(long, default_value = "catalog.ocps")]
+        catalog: PathBuf,
+    },
+}
+
+fn main() -> Result<()> {
+    let cli = Cli::parse();
+
+    match cli.command {
+        Commands::Import { path, catalog } => {
+            cmd_import(path, catalog)?;
+        }
+        Commands::Export { photo, output, _quality, _resize, catalog } => {
+            cmd_export(photo, output, _quality, _resize, catalog)?;
+        }
+        Commands::Stats { catalog } => {
+            cmd_stats(catalog)?;
+        }
+        Commands::List { rating, flag, catalog } => {
+            cmd_list(rating, flag, catalog)?;
+        }
+    }
+
+    Ok(())
+}
+
+fn cmd_import(path: PathBuf, catalog_path: PathBuf) -> Result<()> {
+    println!("Opening catalog: {}", catalog_path.display());
+    let catalog = Catalog::open(&catalog_path)?;
+
+    println!("Importing from: {}", path.display());
+    let result = catalog.import_folder(&path)?;
+
+    println!("✓ Import complete:");
+    println!("  Total:    {}", result.total);
+    println!("  Inserted: {}", result.inserted);
+    println!("  Skipped:  {}", result.skipped);
+
+    if !result.errors.is_empty() {
+        println!("  Errors:   {}", result.errors.len());
+        for err in result.errors.iter().take(10) {
+            println!("    - {}", err);
+        }
+        if result.errors.len() > 10 {
+            println!("    ... and {} more errors", result.errors.len() - 10);
+        }
+    }
+
+    Ok(())
+}
+
+fn cmd_export(
+    photo: String,
+    output: PathBuf,
+    _quality: u32,
+    _resize: Option<u32>,
+    catalog_path: PathBuf,
+) -> Result<()> {
+    println!("Opening catalog: {}", catalog_path.display());
+    let catalog = Catalog::open(&catalog_path)?;
+
+    std::fs::create_dir_all(&output)?;
+
+    if photo == "all" {
+        println!("Exporting all photos to: {}", output.display());
+
+        let filter = PhotoFilter {
+            rating_min: None,
+            flag: None,
+            color_label: None,
+            search: None,
+            limit: 10000,
+            offset: 0,
+        };
+
+        let photos = catalog.get_photos(&filter, &SortOrder::DateTakenDesc)?;
+        println!("Found {} photos", photos.len());
+
+        for (i, photo_rec) in photos.iter().enumerate() {
+            println!("  [{}/{}] {}", i + 1, photos.len(), photo_rec.file_name);
+            // Export functionality would go here - for now just list
+        }
+    } else {
+        println!("Exporting photo: {}", photo);
+        let photo_rec = catalog.get_photo(&photo)?;
+
+        if let Some(p) = photo_rec {
+            println!("  File: {}", p.file_path);
+            println!("  Size: {} bytes", p.file_size);
+            // Export functionality would go here
+        } else {
+            anyhow::bail!("Photo not found: {}", photo);
+        }
+    }
+
+    println!("✓ Export complete (placeholder - actual export not yet implemented)");
+    Ok(())
+}
+
+fn cmd_stats(catalog_path: PathBuf) -> Result<()> {
+    println!("Opening catalog: {}", catalog_path.display());
+    let catalog = Catalog::open(&catalog_path)?;
+
+    let total = catalog.photo_count()?;
+
+    // Count rated photos
+    let filter_rated = PhotoFilter {
+        rating_min: Some(1),
+        flag: None,
+        color_label: None,
+        search: None,
+        limit: 100000,
+        offset: 0,
+    };
+    let rated = catalog.get_photos(&filter_rated, &SortOrder::DateTakenDesc)?;
+
+    // Count picks
+    let filter_picks = PhotoFilter {
+        rating_min: None,
+        flag: Some("pick".to_string()),
+        color_label: None,
+        search: None,
+        limit: 100000,
+        offset: 0,
+    };
+    let picks = catalog.get_photos(&filter_picks, &SortOrder::DateTakenDesc)?;
+
+    // Count rejects
+    let rejects = catalog.get_rejected_count()?;
+
+    println!("\n📊 Catalog Statistics");
+    println!("─────────────────────");
+    println!("Total photos:   {}", total);
+    println!("Rated photos:   {}", rated.len());
+    println!("Picks:          {}", picks.len());
+    println!("Rejects:        {}", rejects);
+    println!();
+
+    Ok(())
+}
+
+fn cmd_list(rating: Option<u8>, flag: Option<String>, catalog_path: PathBuf) -> Result<()> {
+    println!("Opening catalog: {}", catalog_path.display());
+    let catalog = Catalog::open(&catalog_path)?;
+
+    let filter = PhotoFilter {
+        rating_min: rating,
+        flag: flag.clone(),
+        color_label: None,
+        search: None,
+        limit: 1000,
+        offset: 0,
+    };
+
+    let photos = catalog.get_photos(&filter, &SortOrder::DateTakenDesc)?;
+
+    if photos.is_empty() {
+        println!("No photos found matching criteria.");
+        return Ok(());
+    }
+
+    println!("\n{} photos found:\n", photos.len());
+    println!("{:<40} {:>6} {:>8} {:>10}", "Filename", "Rating", "Flag", "Date");
+    println!("{}", "─".repeat(70));
+
+    for photo in photos.iter().take(100) {
+        let date = photo.date_taken.as_deref().unwrap_or("N/A");
+        let flag_str = match photo.flag.as_str() {
+            "pick" => "✓",
+            "reject" => "✗",
+            _ => " ",
+        };
+
+        println!(
+            "{:<40} {:>6} {:>8} {:>10}",
+            truncate_filename(&photo.file_name, 40),
+            "★".repeat(photo.rating as usize),
+            flag_str,
+            truncate_str(date, 10)
+        );
+    }
+
+    if photos.len() > 100 {
+        println!("\n... and {} more photos", photos.len() - 100);
+    }
+
+    println!();
+    Ok(())
+}
+
+fn truncate_filename(s: &str, max_len: usize) -> String {
+    if s.len() <= max_len {
+        s.to_string()
+    } else {
+        format!("...{}", &s[s.len() - (max_len - 3)..])
+    }
+}
+
+fn truncate_str(s: &str, max_len: usize) -> String {
+    if s.len() <= max_len {
+        s.to_string()
+    } else {
+        format!("{}...", &s[..max_len - 3])
+    }
+}

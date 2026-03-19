@@ -49,6 +49,8 @@ pub struct PhotoFilter {
 pub enum SortOrder {
     #[default]
     DateTaken,
+    DateTakenDesc,
+    DateImportedDesc,
     FileName,
     Rating,
     FileSize,
@@ -58,6 +60,8 @@ impl SortOrder {
     pub fn to_sql(&self) -> &'static str {
         match self {
             SortOrder::DateTaken => "date_taken DESC",
+            SortOrder::DateTakenDesc => "date_taken DESC",
+            SortOrder::DateImportedDesc => "date_imported DESC",
             SortOrder::FileName => "file_name ASC",
             SortOrder::Rating => "rating DESC",
             SortOrder::FileSize => "file_size DESC",
