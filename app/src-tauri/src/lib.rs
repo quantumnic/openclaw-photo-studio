@@ -29,6 +29,11 @@ pub fn run() {
             commands::compute_histogram,
             commands::get_presets,
             commands::apply_preset,
+            commands::get_keywords,
+            commands::add_keyword_to_photos,
+            commands::batch_update_rating,
+            commands::batch_update_flag,
+            commands::batch_update_color_label,
         ])
         .setup(|app| {
             #[cfg(debug_assertions)]

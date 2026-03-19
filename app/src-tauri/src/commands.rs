@@ -694,3 +694,105 @@ pub fn apply_preset(
     serde_json::to_value(&new_recipe)
         .map_err(|e| format!("Failed to convert recipe to JSON: {}", e))
 }
+
+/// Get all keywords with usage count
+#[tauri::command]
+pub fn get_keywords(state: State<AppState>) -> Result<Vec<serde_json::Value>, String> {
+    let catalog_lock = state.catalog.lock().unwrap();
+    let catalog = catalog_lock
+        .as_ref()
+        .ok_or("No catalog open".to_string())?;
+
+    let keywords = catalog
+        .get_all_keywords_with_count()
+        .map_err(|e| format!("Failed to get keywords: {}", e))?;
+
+    let json_keywords = keywords
+        .into_iter()
+        .map(|(id, name, count)| {
+            serde_json::json!({
+                "id": id,
+                "name": name,
+                "count": count,
+            })
+        })
+        .collect();
+
+    Ok(json_keywords)
+}
+
+/// Add keyword to photos
+#[tauri::command]
+pub fn add_keyword_to_photos(
+    state: State<AppState>,
+    photo_ids: Vec<String>,
+    keyword: String,
+) -> Result<u32, String> {
+    let catalog_lock = state.catalog.lock().unwrap();
+    let catalog = catalog_lock
+        .as_ref()
+        .ok_or("No catalog open".to_string())?;
+
+    // Get or create keyword
+    let keyword_id = catalog
+        .get_or_create_keyword(&keyword)
+        .map_err(|e| format!("Failed to create keyword: {}", e))?;
+
+    // Add to photos
+    let count = catalog
+        .batch_add_keywords(&photo_ids, &[keyword_id])
+        .map_err(|e| format!("Failed to add keywords: {}", e))?;
+
+    Ok(count)
+}
+
+/// Batch update rating for multiple photos
+#[tauri::command]
+pub fn batch_update_rating(
+    state: State<AppState>,
+    photo_ids: Vec<String>,
+    rating: u8,
+) -> Result<u32, String> {
+    let catalog_lock = state.catalog.lock().unwrap();
+    let catalog = catalog_lock
+        .as_ref()
+        .ok_or("No catalog open".to_string())?;
+
+    catalog
+        .batch_update_rating(&photo_ids, rating)
+        .map_err(|e| format!("Failed to batch update rating: {}", e))
+}
+
+/// Batch update flag for multiple photos
+#[tauri::command]
+pub fn batch_update_flag(
+    state: State<AppState>,
+    photo_ids: Vec<String>,
+    flag: String,
+) -> Result<u32, String> {
+    let catalog_lock = state.catalog.lock().unwrap();
+    let catalog = catalog_lock
+        .as_ref()
+        .ok_or("No catalog open".to_string())?;
+
+    catalog
+        .batch_update_flag(&photo_ids, &flag)
+        .map_err(|e| format!("Failed to batch update flag: {}", e))
+}
+
+/// Batch update color label for multiple photos
+#[tauri::command]
+pub fn batch_update_color_label(
+    state: State<AppState>,
+    photo_ids: Vec<String>,
+    label: String,
+) -> Result<u32, String> {
+    let catalog_lock = state.catalog.lock().unwrap();
+    let catalog = catalog_lock
+        .as_ref()
+        .ok_or("No catalog open".to_string())?;
+
+    catalog
+        .batch_update_color_label(&photo_ids, &label)
+        .map_err(|e| format!("Failed to batch update color label: {}", e))
+}
