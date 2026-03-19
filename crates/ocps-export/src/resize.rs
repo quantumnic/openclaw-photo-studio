@@ -123,7 +123,7 @@ mod tests {
         let height = 1000;
         let rgb_data = vec![100u8; (width * height * 3) as usize];
 
-        let (resized, new_w, new_h) = resize_long_edge(&rgb_data, width, height, 2000);
+        let (_resized, new_w, new_h) = resize_long_edge(&rgb_data, width, height, 2000);
 
         // Should stay unchanged (already at target size)
         assert_eq!(new_w, 2000);

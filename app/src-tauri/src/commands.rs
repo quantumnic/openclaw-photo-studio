@@ -536,16 +536,34 @@ pub fn export_photo_jpeg(
 
     let path = std::path::Path::new(&photo.file_path);
 
-    // Decode RAW
-    let raw = ocps_core::decode(path).map_err(|e| format!("Failed to decode RAW: {:?}", e))?;
+    // Detect file type and load appropriately
+    let is_raw = is_raw_file(path);
 
-    // Demosaic
-    let rgb = ocps_core::demosaic(&raw, ocps_core::DemosaicAlgorithm::Bilinear);
+    let image = if is_raw {
+        // RAW workflow
+        let raw = ocps_core::decode(path)
+            .map_err(|e| format!("Failed to decode RAW: {:?}", e))?;
 
-    // Convert u8 → u16 for pipeline
-    let data_u16: Vec<u16> = rgb.data.iter().map(|&v| (v as u16) * 257).collect();
+        let rgb = ocps_core::demosaic(&raw, ocps_core::DemosaicAlgorithm::Bilinear);
 
-    let image = ocps_core::RgbImage16::from_data(rgb.width, rgb.height, data_u16);
+        // Convert u8 → u16 for pipeline
+        let data_u16: Vec<u16> = rgb.data.iter().map(|&v| (v as u16) * 257).collect();
+
+        ocps_core::RgbImage16::from_data(rgb.width, rgb.height, data_u16)
+    } else {
+        // JPEG/TIFF workflow
+        let img = image::open(path)
+            .map_err(|e| format!("Failed to open image: {}", e))?;
+
+        let rgb8 = img.to_rgb8();
+        let width = rgb8.width();
+        let height = rgb8.height();
+
+        // Convert u8 → u16 for pipeline
+        let data_u16: Vec<u16> = rgb8.as_raw().iter().map(|&v| (v as u16) * 257).collect();
+
+        ocps_core::RgbImage16::from_data(width, height, data_u16)
+    };
 
     // Load edit recipe
     let recipe_json = catalog
@@ -573,12 +591,170 @@ pub fn export_photo_jpeg(
     ocps_export::jpeg::export_jpeg(&final_data, final_width, final_height, quality, output_p)
         .map_err(|e| format!("Failed to export JPEG: {:?}", e))?;
 
+    // Get file size
+    let file_size = std::fs::metadata(output_p).map(|m| m.len()).unwrap_or(0);
+
     let duration_ms = start.elapsed().as_millis();
 
     Ok(serde_json::json!({
         "output_path": output_path,
+        "width": final_width,
+        "height": final_height,
+        "file_size": file_size,
         "duration_ms": duration_ms,
     }))
+}
+
+/// Check if a file is a RAW format
+fn is_raw_file(path: &std::path::Path) -> bool {
+    if let Some(ext) = path.extension() {
+        let ext_str = ext.to_string_lossy().to_lowercase();
+        matches!(
+            ext_str.as_str(),
+            "arw" | "nef" | "raf" | "dng" | "cr2" | "cr3" | "orf" | "rw2"
+        )
+    } else {
+        false
+    }
+}
+
+/// Batch export multiple photos to JPEG
+#[tauri::command]
+pub fn export_photos_batch(
+    state: State<AppState>,
+    photo_ids: Vec<String>,
+    output_folder: String,
+    quality: u32,
+    resize_long_edge: Option<u32>,
+) -> Result<serde_json::Value, String> {
+    let catalog_lock = state.catalog.lock().unwrap();
+    let catalog = catalog_lock
+        .as_ref()
+        .ok_or("No catalog open".to_string())?;
+
+    let output_dir = std::path::Path::new(&output_folder);
+    if !output_dir.exists() {
+        std::fs::create_dir_all(output_dir)
+            .map_err(|e| format!("Failed to create output directory: {}", e))?;
+    }
+
+    let mut succeeded = 0;
+    let mut failed = 0;
+    let mut errors = Vec::new();
+
+    for photo_id in photo_ids.iter() {
+        // Get photo
+        let photo = match catalog.get_photo(photo_id) {
+            Ok(Some(p)) => p,
+            Ok(None) => {
+                errors.push(format!("{}: Photo not found", photo_id));
+                failed += 1;
+                continue;
+            }
+            Err(e) => {
+                errors.push(format!("{}: {}", photo_id, e));
+                failed += 1;
+                continue;
+            }
+        };
+
+        // Construct output path
+        let input_path = std::path::Path::new(&photo.file_path);
+        let file_stem = input_path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("photo");
+        let output_path = output_dir.join(format!("{}.jpg", file_stem));
+
+        // Try to export
+        match export_single_photo(
+            catalog,
+            &photo,
+            &output_path,
+            quality,
+            resize_long_edge,
+        ) {
+            Ok(_) => succeeded += 1,
+            Err(e) => {
+                errors.push(format!("{}: {}", photo_id, e));
+                failed += 1;
+            }
+        }
+    }
+
+    Ok(serde_json::json!({
+        "total": photo_ids.len(),
+        "succeeded": succeeded,
+        "failed": failed,
+        "errors": errors,
+    }))
+}
+
+/// Helper function to export a single photo (internal use)
+fn export_single_photo(
+    catalog: &ocps_catalog::Catalog,
+    photo: &ocps_catalog::PhotoRecord,
+    output_path: &std::path::Path,
+    quality: u32,
+    resize_long_edge: Option<u32>,
+) -> Result<(), String> {
+    let path = std::path::Path::new(&photo.file_path);
+
+    // Detect file type and load appropriately
+    let is_raw = is_raw_file(path);
+
+    let image = if is_raw {
+        // RAW workflow
+        let raw = ocps_core::decode(path)
+            .map_err(|e| format!("Failed to decode RAW: {:?}", e))?;
+
+        let rgb = ocps_core::demosaic(&raw, ocps_core::DemosaicAlgorithm::Bilinear);
+
+        // Convert u8 → u16 for pipeline
+        let data_u16: Vec<u16> = rgb.data.iter().map(|&v| (v as u16) * 257).collect();
+
+        ocps_core::RgbImage16::from_data(rgb.width, rgb.height, data_u16)
+    } else {
+        // JPEG/TIFF workflow
+        let img = image::open(path)
+            .map_err(|e| format!("Failed to open image: {}", e))?;
+
+        let rgb8 = img.to_rgb8();
+        let width = rgb8.width();
+        let height = rgb8.height();
+
+        // Convert u8 → u16 for pipeline
+        let data_u16: Vec<u16> = rgb8.as_raw().iter().map(|&v| (v as u16) * 257).collect();
+
+        ocps_core::RgbImage16::from_data(width, height, data_u16)
+    };
+
+    // Load edit recipe
+    let recipe_json = catalog
+        .load_edit(&photo.id)
+        .map_err(|e| format!("Failed to load edit: {}", e))?;
+
+    let recipe: ocps_core::EditRecipe = if let Some(json) = recipe_json {
+        serde_json::from_str(&json).map_err(|e| format!("Failed to parse recipe: {}", e))?
+    } else {
+        ocps_core::EditRecipe::default()
+    };
+
+    // Apply pipeline
+    let output = ocps_core::ImageProcessor::process(&image, &recipe);
+
+    // Resize if requested
+    let (final_data, final_width, final_height) = if let Some(long_edge) = resize_long_edge {
+        ocps_export::resize::resize_long_edge(&output.data, output.width, output.height, long_edge)
+    } else {
+        (output.data, output.width, output.height)
+    };
+
+    // Export JPEG
+    ocps_export::jpeg::export_jpeg(&final_data, final_width, final_height, quality, output_path)
+        .map_err(|e| format!("Failed to export JPEG: {:?}", e))?;
+
+    Ok(())
 }
 
 /// Compute histogram for a photo
@@ -795,4 +971,32 @@ pub fn batch_update_color_label(
     catalog
         .batch_update_color_label(&photo_ids, &label)
         .map_err(|e| format!("Failed to batch update color label: {}", e))
+}
+
+/// Get all photos with GPS coordinates
+#[tauri::command]
+pub fn get_geo_photos(state: State<AppState>) -> Result<Vec<serde_json::Value>, String> {
+    let catalog_lock = state.catalog.lock().unwrap();
+    let catalog = catalog_lock
+        .as_ref()
+        .ok_or("No catalog open".to_string())?;
+
+    let photos = catalog
+        .get_photos_with_gps()
+        .map_err(|e| format!("Failed to get geo photos: {}", e))?;
+
+    let json_photos = photos
+        .into_iter()
+        .map(|photo| {
+            serde_json::json!({
+                "id": photo.id,
+                "file_name": photo.file_name,
+                "lat": photo.lat,
+                "lon": photo.lon,
+                "rating": photo.rating,
+            })
+        })
+        .collect();
+
+    Ok(json_photos)
 }

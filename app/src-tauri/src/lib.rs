@@ -26,6 +26,7 @@ pub fn run() {
             commands::paste_edit,
             commands::reset_edit,
             commands::export_photo_jpeg,
+            commands::export_photos_batch,
             commands::compute_histogram,
             commands::get_presets,
             commands::apply_preset,
@@ -34,6 +35,7 @@ pub fn run() {
             commands::batch_update_rating,
             commands::batch_update_flag,
             commands::batch_update_color_label,
+            commands::get_geo_photos,
         ])
         .setup(|app| {
             #[cfg(debug_assertions)]
