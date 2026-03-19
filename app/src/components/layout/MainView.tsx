@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
-import { createSignal, onMount, Show, For, onCleanup } from "solid-js";
+import { createSignal, onMount, Show, For, onCleanup, createStore, createEffect } from "solid-js";
+import { FilterBar, FilterState } from "../library/FilterBar";
 
 type Module = "library" | "develop" | "map" | "print";
 
@@ -63,12 +64,36 @@ function LibraryView(props: LibraryViewProps) {
   const [importResult, setImportResult] = createSignal<any>(null);
   const [error, setError] = createSignal<string | null>(null);
 
+  // Filter state
+  const [filter, setFilter] = createStore<FilterState>({
+    ratingMin: 0,
+    flag: "all",
+    colorLabel: "all",
+    searchQuery: "",
+  });
+
   // Load photos from catalog
   const loadPhotos = async () => {
     try {
       setLoading(true);
+
+      // Build filter object
+      const filterObj: any = {};
+      if (filter.ratingMin > 0) {
+        filterObj.rating_min = filter.ratingMin;
+      }
+      if (filter.flag !== "all") {
+        filterObj.flag = filter.flag;
+      }
+      if (filter.colorLabel !== "all") {
+        filterObj.color_label = filter.colorLabel;
+      }
+      if (filter.searchQuery.trim()) {
+        filterObj.search = filter.searchQuery.trim();
+      }
+
       const result = await invoke<Photo[]>("get_photos", {
-        filter: {},
+        filter: filterObj,
         limit: 500,
         offset: 0,
       });
@@ -218,6 +243,13 @@ function LibraryView(props: LibraryViewProps) {
     onCleanup(() => document.removeEventListener("keydown", handleKeyDown));
   });
 
+  // Reload photos when filter changes
+  createEffect(() => {
+    // Track all filter properties
+    const _ = [filter.ratingMin, filter.flag, filter.colorLabel, filter.searchQuery];
+    loadPhotos();
+  });
+
   const colorLabelColors: Record<string, string> = {
     red: "#ff4a4a",
     yellow: "#e8b84b",
@@ -277,6 +309,14 @@ function LibraryView(props: LibraryViewProps) {
           </div>
         )}
       </Show>
+
+      {/* Filter Bar */}
+      <FilterBar
+        filter={filter}
+        onFilterChange={setFilter}
+        totalCount={stats()?.total || 0}
+        filteredCount={photos().length}
+      />
 
       {/* Photo Grid */}
       <div class="flex-1 overflow-auto p-3">

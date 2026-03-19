@@ -1,4 +1,5 @@
-import { createSignal } from "solid-js";
+import { createSignal, createResource, For, Show } from "solid-js";
+import { invoke } from "@tauri-apps/api/core";
 
 type Module = "library" | "develop" | "map" | "print";
 
@@ -22,9 +23,39 @@ function PanelSection(props: { title: string; children: any }) {
   );
 }
 
+interface Keyword {
+  id: string;
+  name: string;
+  count: number;
+}
+
 export function LeftSidebar(props: LeftSidebarProps) {
   const folders = ["📁 2026", "📁 2025", "📁 2024", "📁 Archive"];
   const collections = ["⭐ Best of 2026", "📷 Weddings", "🏔 Landscapes", "Quick Collection"];
+
+  // Load keywords from catalog
+  const [keywords] = createResource<Keyword[]>(async () => {
+    try {
+      return await invoke<Keyword[]>("get_keywords");
+    } catch (e) {
+      console.error("Failed to load keywords:", e);
+      return [];
+    }
+  });
+
+  const [newKeyword, setNewKeyword] = createSignal("");
+
+  const handleAddKeyword = async () => {
+    const keyword = newKeyword().trim();
+    if (!keyword) return;
+
+    // This would add to selected photos - for now just log
+    console.log("Add keyword:", keyword);
+    setNewKeyword("");
+
+    // Refresh keywords
+    keywords.refetch?.();
+  };
 
   return (
     <aside class="w-56 flex-shrink-0 bg-[#1a1a1a] border-r border-[#2a2a2a] overflow-y-auto flex flex-col">
@@ -58,6 +89,45 @@ export function LeftSidebar(props: LeftSidebarProps) {
                 </li>
               ))}
             </ul>
+          </PanelSection>
+
+          <PanelSection title="Keywords">
+            <div class="space-y-2">
+              {/* Add keyword input */}
+              <div class="flex gap-1">
+                <input
+                  type="text"
+                  value={newKeyword()}
+                  onInput={(e) => setNewKeyword(e.currentTarget.value)}
+                  onKeyPress={(e) => e.key === "Enter" && handleAddKeyword()}
+                  placeholder="Add keyword..."
+                  class="flex-1 px-2 py-1 text-xs bg-[#252525] border border-[#333] rounded text-[#bbb] placeholder-[#555] focus:border-blue-500 focus:outline-none"
+                />
+                <button
+                  onClick={handleAddKeyword}
+                  class="px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded transition-colors"
+                  disabled={!newKeyword().trim()}
+                >
+                  +
+                </button>
+              </div>
+
+              {/* Keywords list */}
+              <ul class="space-y-0.5 max-h-48 overflow-y-auto">
+                <Show when={keywords()} fallback={<li class="px-2 py-1 text-xs text-[#555]">Loading...</li>}>
+                  <For each={keywords()}>
+                    {(keyword) => (
+                      <li>
+                        <button class="w-full text-left px-2 py-1 rounded text-xs text-[#888] hover:bg-[#252525] hover:text-[#bbb] transition-colors flex justify-between items-center">
+                          <span>{keyword.name}</span>
+                          <span class="text-[#555] text-xs">({keyword.count})</span>
+                        </button>
+                      </li>
+                    )}
+                  </For>
+                </Show>
+              </ul>
+            </div>
           </PanelSection>
         </>
       )}
