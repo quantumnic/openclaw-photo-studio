@@ -19,6 +19,9 @@ pub struct PhotoRecord {
     pub color_label: String,
     pub flag: String,
     pub has_edits: bool,
+    pub stack_id: Option<String>,
+    pub stack_position: Option<i32>,
+    pub virtual_copy_of: Option<String>,
 }
 
 /// Result of an import operation

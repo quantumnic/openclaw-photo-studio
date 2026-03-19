@@ -3,6 +3,7 @@
 //! SQLite-based catalog with FTS5 search, collections, keywords.
 
 pub mod db;
+pub mod metadata_template;
 pub mod models;
 
 pub fn version() -> &'static str {
@@ -17,7 +18,7 @@ pub mod schema {
     pub const CREATE_PHOTOS: &str = r#"
         CREATE TABLE IF NOT EXISTS photos (
             id              TEXT PRIMARY KEY,
-            file_path       TEXT NOT NULL UNIQUE,
+            file_path       TEXT NOT NULL,
             file_name       TEXT NOT NULL,
             file_size       INTEGER,
             file_hash       TEXT,
@@ -42,6 +43,13 @@ pub mod schema {
             has_edits       INTEGER DEFAULT 0,
             edit_version    INTEGER DEFAULT 0,
             folder_id       TEXT,
+            stack_id        TEXT,
+            stack_position  INTEGER,
+            virtual_copy_of TEXT REFERENCES photos(id),
+            copyright       TEXT,
+            creator         TEXT,
+            city            TEXT,
+            country         TEXT,
             schema_version  INTEGER DEFAULT 1
         )
     "#;

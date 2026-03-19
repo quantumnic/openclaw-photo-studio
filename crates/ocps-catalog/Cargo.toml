@@ -16,3 +16,6 @@ log = { workspace = true }
 rusqlite = { version = "0.31", features = ["bundled"] }
 walkdir = "2"
 sha2 = "0.10"
+
+[dev-dependencies]
+tempfile = "3"
