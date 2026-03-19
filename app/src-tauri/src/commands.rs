@@ -1,11 +1,22 @@
 use std::sync::Mutex;
 use tauri::State;
 
+/// Sidecar sync mode
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum SidecarMode {
+    Auto,
+    Manual,
+    ReadOnly,
+    Disabled,
+}
+
 /// Application state holding the catalog and edit clipboard
 pub struct AppState {
     pub catalog: Mutex<Option<ocps_catalog::Catalog>>,
     pub clipboard: Mutex<Option<ocps_core::EditClipboard>>,
     pub preset_library: Mutex<ocps_core::PresetLibrary>,
+    pub sidecar_mode: Mutex<SidecarMode>,
+    pub plugin_registry: Mutex<ocps_plugin_host::PluginRegistry>,
 }
 
 impl AppState {
@@ -19,10 +30,20 @@ impl AppState {
         let mut preset_library = ocps_core::PresetLibrary::new(user_dir);
         let _ = preset_library.load_user_presets(); // Load user presets if they exist
 
+        // Initialize plugin registry
+        let mut plugin_registry = ocps_plugin_host::PluginRegistry::new();
+        let plugin_dir = dirs::data_dir()
+            .unwrap_or_else(|| std::path::PathBuf::from("."))
+            .join("openclaw-photo-studio")
+            .join("plugins");
+        let _ = plugin_registry.scan_directory(&plugin_dir);
+
         Self {
             catalog: Mutex::new(None),
             clipboard: Mutex::new(None),
             preset_library: Mutex::new(preset_library),
+            sidecar_mode: Mutex::new(SidecarMode::Auto),
+            plugin_registry: Mutex::new(plugin_registry),
         }
     }
 }
@@ -323,9 +344,47 @@ pub fn save_edit_recipe(
         .as_ref()
         .ok_or("No catalog open".to_string())?;
 
+    // Save to catalog database
     catalog
         .save_edit(&photo_id, &recipe_json)
-        .map_err(|e| format!("Failed to save edit: {}", e))
+        .map_err(|e| format!("Failed to save edit: {}", e))?;
+
+    // Check sidecar mode and write XMP if needed
+    let sidecar_mode = state.sidecar_mode.lock().unwrap();
+    if *sidecar_mode == SidecarMode::Auto {
+        // Get photo file path
+        if let Ok(Some(photo)) = catalog.get_photo(&photo_id) {
+            let raw_path = std::path::Path::new(&photo.file_path);
+
+            // Parse recipe to XmpDevelopSettings
+            if let Ok(edit_recipe) = serde_json::from_str::<ocps_core::EditRecipe>(&recipe_json) {
+                let xmp_settings = ocps_xmp::XmpDevelopSettings {
+                    temperature: Some(edit_recipe.white_balance.temperature as i32),
+                    tint: Some(edit_recipe.white_balance.tint),
+                    exposure: Some(edit_recipe.exposure),
+                    contrast: Some(edit_recipe.contrast),
+                    highlights: Some(edit_recipe.highlights),
+                    shadows: Some(edit_recipe.shadows),
+                    whites: Some(edit_recipe.whites),
+                    blacks: Some(edit_recipe.blacks),
+                    clarity: Some(edit_recipe.clarity),
+                    dehaze: Some(edit_recipe.dehaze),
+                    vibrance: Some(edit_recipe.vibrance),
+                    saturation: Some(edit_recipe.saturation),
+                    rating: None,
+                    label: None,
+                    process_version: Some("1".to_string()),
+                };
+
+                let iptc = ocps_xmp::IptcData::default();
+
+                // Write XMP sidecar
+                let _ = ocps_xmp::write_sidecar(raw_path, &xmp_settings, &iptc);
+            }
+        }
+    }
+
+    Ok(())
 }
 
 /// Load edit recipe for a photo
@@ -999,4 +1058,187 @@ pub fn get_geo_photos(state: State<AppState>) -> Result<Vec<serde_json::Value>, 
         .collect();
 
     Ok(json_photos)
+}
+
+// ========== PART G: New Commands ==========
+
+/// Import a Lightroom Classic catalog
+#[tauri::command]
+pub fn import_lightroom_catalog(
+    state: State<AppState>,
+    lrcat_path: String,
+) -> Result<serde_json::Value, String> {
+    let mut catalog_lock = state.catalog.lock().unwrap();
+
+    let catalog = catalog_lock
+        .as_mut()
+        .ok_or("No catalog open. Import a folder first to create a catalog.".to_string())?;
+
+    let lr_path = std::path::Path::new(&lrcat_path);
+    let result = ocps_catalog::import_lightroom_catalog(lr_path, catalog, None)
+        .map_err(|e| format!("Lightroom import failed: {}", e))?;
+
+    Ok(serde_json::json!({
+        "photos_imported": result.photos_imported,
+        "photos_skipped": result.photos_skipped,
+        "keywords_imported": result.keywords_imported,
+        "collections_imported": result.collections_imported,
+        "errors": result.errors,
+        "warnings": result.warnings,
+    }))
+}
+
+/// Import a Lightroom preset file (.lrtemplate or .xmp)
+#[tauri::command]
+pub fn import_preset_file(
+    state: State<AppState>,
+    path: String,
+) -> Result<serde_json::Value, String> {
+    let preset_path = std::path::Path::new(&path);
+
+    let (name, settings) = ocps_xmp::import_preset_file(preset_path)
+        .map_err(|e| format!("Failed to import preset: {}", e))?;
+
+    // Convert XmpDevelopSettings to EditRecipe
+    let mut recipe = ocps_core::EditRecipe::default();
+    if let Some(temp) = settings.temperature {
+        recipe.white_balance.temperature = temp as u32;
+    }
+    if let Some(tint) = settings.tint {
+        recipe.white_balance.tint = tint;
+    }
+    if let Some(exp) = settings.exposure {
+        recipe.exposure = exp;
+    }
+    if let Some(con) = settings.contrast {
+        recipe.contrast = con;
+    }
+    if let Some(hl) = settings.highlights {
+        recipe.highlights = hl;
+    }
+    if let Some(sh) = settings.shadows {
+        recipe.shadows = sh;
+    }
+    if let Some(wh) = settings.whites {
+        recipe.whites = wh;
+    }
+    if let Some(bl) = settings.blacks {
+        recipe.blacks = bl;
+    }
+    if let Some(cl) = settings.clarity {
+        recipe.clarity = cl;
+    }
+    if let Some(dh) = settings.dehaze {
+        recipe.dehaze = dh;
+    }
+    if let Some(vib) = settings.vibrance {
+        recipe.vibrance = vib;
+    }
+    if let Some(sat) = settings.saturation {
+        recipe.saturation = sat;
+    }
+
+    // Create preset and save to library
+    let preset = ocps_core::Preset {
+        id: uuid::Uuid::new_v4().to_string(),
+        name: name.clone(),
+        group: "Imported".to_string(),
+        description: Some(format!("Imported from {}", preset_path.display())),
+        recipe,
+        applied_modules: vec!["all".to_string()],
+        is_builtin: false,
+    };
+
+    let library = state.preset_library.lock().unwrap();
+    library.save_preset(&preset)
+        .map_err(|e| format!("Failed to save preset: {}", e))?;
+
+    Ok(serde_json::json!({
+        "id": preset.id,
+        "name": preset.name,
+        "group": preset.group,
+        "description": preset.description,
+    }))
+}
+
+/// Get all installed plugins
+#[tauri::command]
+pub fn get_plugins(state: State<AppState>) -> Vec<serde_json::Value> {
+    let registry = state.plugin_registry.lock().unwrap();
+    let plugins = registry.list_plugins();
+
+    plugins
+        .iter()
+        .map(|manifest| {
+            serde_json::json!({
+                "id": manifest.id,
+                "name": manifest.name,
+                "version": manifest.version,
+                "api_version": manifest.api_version,
+                "plugin_type": manifest.plugin_type,
+                "author": manifest.author,
+                "description": manifest.description,
+            })
+        })
+        .collect()
+}
+
+/// Rescan plugin directory
+#[tauri::command]
+pub fn scan_plugins(state: State<AppState>) -> Result<u32, String> {
+    let plugin_dir = dirs::data_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join("openclaw-photo-studio")
+        .join("plugins");
+
+    let mut registry = state.plugin_registry.lock().unwrap();
+    let count = registry
+        .scan_directory(&plugin_dir)
+        .map_err(|e| format!("Failed to scan plugins: {}", e))?;
+
+    Ok(count as u32)
+}
+
+/// Get supported RAW formats
+#[tauri::command]
+pub fn get_supported_formats() -> Vec<String> {
+    vec![
+        "arw".to_string(),
+        "nef".to_string(),
+        "raf".to_string(),
+        "dng".to_string(),
+        "cr2".to_string(),
+        "cr3".to_string(),
+        "orf".to_string(),
+        "rw2".to_string(),
+    ]
+}
+
+/// Set XMP sidecar mode
+#[tauri::command]
+pub fn set_sidecar_mode(state: State<AppState>, mode: String) -> Result<(), String> {
+    let sidecar_mode = match mode.as_str() {
+        "auto" => SidecarMode::Auto,
+        "manual" => SidecarMode::Manual,
+        "readonly" => SidecarMode::ReadOnly,
+        "disabled" => SidecarMode::Disabled,
+        _ => return Err(format!("Invalid sidecar mode: {}", mode)),
+    };
+
+    let mut mode_lock = state.sidecar_mode.lock().unwrap();
+    *mode_lock = sidecar_mode;
+
+    Ok(())
+}
+
+/// Get XMP sidecar mode
+#[tauri::command]
+pub fn get_sidecar_mode(state: State<AppState>) -> String {
+    let mode_lock = state.sidecar_mode.lock().unwrap();
+    match *mode_lock {
+        SidecarMode::Auto => "auto".to_string(),
+        SidecarMode::Manual => "manual".to_string(),
+        SidecarMode::ReadOnly => "readonly".to_string(),
+        SidecarMode::Disabled => "disabled".to_string(),
+    }
 }

@@ -36,6 +36,13 @@ pub fn run() {
             commands::batch_update_flag,
             commands::batch_update_color_label,
             commands::get_geo_photos,
+            commands::import_lightroom_catalog,
+            commands::import_preset_file,
+            commands::get_plugins,
+            commands::scan_plugins,
+            commands::get_supported_formats,
+            commands::set_sidecar_mode,
+            commands::get_sidecar_mode,
         ])
         .setup(|app| {
             #[cfg(debug_assertions)]

@@ -24,7 +24,9 @@ ocps-core = { path = "../../crates/ocps-core" }
 ocps-catalog = { path = "../../crates/ocps-catalog" }
 ocps-xmp = { path = "../../crates/ocps-xmp" }
 ocps-export = { path = "../../crates/ocps-export" }
+ocps-plugin-host = { path = "../../crates/ocps-plugin-host" }
 dirs = "5"
+uuid = { workspace = true }
 
 [profile.release]
 opt-level = 3
