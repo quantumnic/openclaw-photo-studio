@@ -4,6 +4,7 @@
 
 pub mod db;
 pub mod geo;
+pub mod lightroom_import;
 pub mod metadata_template;
 pub mod models;
 
@@ -117,6 +118,7 @@ pub mod schema {
 // Re-export main types for convenience
 pub use db::Catalog;
 pub use geo::GeoPhoto;
+pub use lightroom_import::{import_lightroom_catalog, LightroomImportResult};
 pub use models::{ImportResult, PhotoFilter, PhotoRecord, SortOrder};
 
 #[cfg(test)]

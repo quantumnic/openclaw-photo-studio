@@ -4,6 +4,7 @@
 //! Supports crs: (Camera Raw Settings), dc:, xmp:, Iptc4xmpCore: namespaces.
 
 pub mod exif;
+pub mod lr_preset;
 pub mod reader;
 pub mod writer;
 
@@ -13,6 +14,7 @@ pub fn version() -> &'static str {
 
 // Re-export main functions
 pub use exif::{read_exif, ExifData};
+pub use lr_preset::{import_preset_file, parse_lrtemplate};
 pub use reader::read_sidecar;
 pub use writer::{merge_sidecar, write_sidecar};
 
