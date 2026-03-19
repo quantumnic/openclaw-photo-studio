@@ -1,12 +1,14 @@
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
-import { createSignal, onMount, Show, For, onCleanup, createStore, createEffect } from "solid-js";
+import { createSignal, onMount, Show, For, onCleanup, createEffect } from "solid-js";
+import { createStore } from "solid-js/store";
 import { FilterBar, FilterState } from "../library/FilterBar";
 import { CompareView } from "../library/CompareView";
 import { SurveyView } from "../library/SurveyView";
 import { MapView } from "../map/MapView";
 import { PrintView } from "../print/PrintView";
 import { PhotoCard } from "../library/PhotoCard";
+import { showToast } from "../common/Toast";
 
 type Module = "library" | "develop" | "map" | "print";
 type ViewMode = "grid" | "loupe" | "compare" | "survey";
@@ -17,6 +19,7 @@ interface MainViewProps {
   selectedPhotoId: string | null;
   selectedPhotoIds: string[];
   onSelectPhoto: (id: string | null) => void;
+  onPhotosLoaded?: (photoIds: string[]) => void;
 }
 
 export function MainView(props: MainViewProps) {
@@ -27,6 +30,7 @@ export function MainView(props: MainViewProps) {
           viewMode={props.viewMode}
           selectedPhotoId={props.selectedPhotoId}
           onSelectPhoto={props.onSelectPhoto}
+          onPhotosLoaded={props.onPhotosLoaded}
         />
       )}
       {props.module === "develop" && <DevelopView selectedPhotoId={props.selectedPhotoId} />}
@@ -66,7 +70,7 @@ interface LibraryViewProps {
   onSelectPhoto: (id: string | null) => void;
 }
 
-function LibraryView(props: LibraryViewProps) {
+function LibraryView(props: LibraryViewProps & { onPhotosLoaded?: (photoIds: string[]) => void }) {
   const [comparePhotoIds, setComparePhotoIds] = createSignal<[string, string]>(["photo1", "photo2"]);
   const [surveyPhotoIds, setSurveyPhotoIds] = createSignal<string[]>(["p1", "p2", "p3", "p4", "p5", "p6"]);
 
@@ -94,7 +98,7 @@ function LibraryView(props: LibraryViewProps) {
   }
 
   // Otherwise show grid
-  return <LibraryGridView {...props} />;
+  return <LibraryGridView {...props} onPhotosLoaded={props.onPhotosLoaded} />;
 }
 
 interface LoupeViewProps {
@@ -169,6 +173,7 @@ function LoupeView(props: LoupeViewProps) {
 interface LibraryGridViewProps {
   selectedPhotoId: string | null;
   onSelectPhoto: (id: string | null) => void;
+  onPhotosLoaded?: (photoIds: string[]) => void;
 }
 
 function LibraryGridView(props: LibraryGridViewProps) {
@@ -178,6 +183,7 @@ function LibraryGridView(props: LibraryGridViewProps) {
   const [thumbnailSize, setThumbnailSize] = createSignal(160);
   const [importResult, setImportResult] = createSignal<any>(null);
   const [error, setError] = createSignal<string | null>(null);
+  const [focusedIndex, setFocusedIndex] = createSignal<number>(-1);
 
   // Filter state
   const [filter, setFilter] = createStore<FilterState>({
@@ -214,6 +220,11 @@ function LibraryGridView(props: LibraryGridViewProps) {
       });
       setPhotos(result);
 
+      // Notify parent of loaded photos
+      if (props.onPhotosLoaded) {
+        props.onPhotosLoaded(result.map(p => p.id));
+      }
+
       // Load stats
       try {
         const statsData = await invoke<CatalogStats>("get_catalog_stats");
@@ -244,39 +255,156 @@ function LibraryGridView(props: LibraryGridViewProps) {
       const path = typeof selected === "string" ? selected : selected.path;
       setLoading(true);
 
+      const startTime = Date.now();
       const result = await invoke<any>("import_folder", { path });
+      const duration = ((Date.now() - startTime) / 1000).toFixed(1);
+
       setImportResult(result);
+
+      // Store in recent folders (localStorage)
+      const recentKey = "recent_import_folders";
+      const recent = JSON.parse(localStorage.getItem(recentKey) || "[]");
+      const updated = [path, ...recent.filter((p: string) => p !== path)].slice(0, 5);
+      localStorage.setItem(recentKey, JSON.stringify(updated));
 
       // Reload photos after import
       await loadPhotos();
+
+      // Show success toast
+      showToast(`Imported ${result.inserted} photos in ${duration}s`, "success", 3000);
     } catch (err) {
       setError(String(err));
+      showToast(`Import failed: ${err}`, "error", 5000);
     } finally {
       setLoading(false);
     }
   };
 
+  // Calculate grid columns for arrow key navigation
+  const getGridColumns = () => {
+    const containerWidth = 1200; // Approximate, could be measured
+    return Math.floor(containerWidth / (thumbnailSize() + 4)); // 4 = gap
+  };
+
+  // Scroll element into view
+  const scrollIntoView = (index: number) => {
+    const photoCards = document.querySelectorAll("[data-photo-card]");
+    if (photoCards[index]) {
+      photoCards[index].scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+  };
+
   // Keyboard shortcuts
   const handleKeyDown = async (e: KeyboardEvent) => {
+    // Navigation keys work with focused index
+    const currentFocus = focusedIndex();
+    const currentPhotos = photos();
+    const gridColumns = getGridColumns();
+
+    // Arrow keys for navigation
+    if (e.key === "ArrowRight") {
+      e.preventDefault();
+      const newIndex = Math.min(currentFocus + 1, currentPhotos.length - 1);
+      setFocusedIndex(newIndex);
+      props.onSelectPhoto(currentPhotos[newIndex]?.id || null);
+      scrollIntoView(newIndex);
+      return;
+    }
+
+    if (e.key === "ArrowLeft") {
+      e.preventDefault();
+      const newIndex = Math.max(currentFocus - 1, 0);
+      setFocusedIndex(newIndex);
+      props.onSelectPhoto(currentPhotos[newIndex]?.id || null);
+      scrollIntoView(newIndex);
+      return;
+    }
+
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      const newIndex = Math.min(currentFocus + gridColumns, currentPhotos.length - 1);
+      setFocusedIndex(newIndex);
+      props.onSelectPhoto(currentPhotos[newIndex]?.id || null);
+      scrollIntoView(newIndex);
+      return;
+    }
+
+    if (e.key === "ArrowUp") {
+      e.preventDefault();
+      const newIndex = Math.max(currentFocus - gridColumns, 0);
+      setFocusedIndex(newIndex);
+      props.onSelectPhoto(currentPhotos[newIndex]?.id || null);
+      scrollIntoView(newIndex);
+      return;
+    }
+
+    if (e.key === "Home") {
+      e.preventDefault();
+      setFocusedIndex(0);
+      props.onSelectPhoto(currentPhotos[0]?.id || null);
+      scrollIntoView(0);
+      return;
+    }
+
+    if (e.key === "End") {
+      e.preventDefault();
+      const lastIndex = currentPhotos.length - 1;
+      setFocusedIndex(lastIndex);
+      props.onSelectPhoto(currentPhotos[lastIndex]?.id || null);
+      scrollIntoView(lastIndex);
+      return;
+    }
+
+    if (e.key === "PageDown") {
+      e.preventDefault();
+      const newIndex = Math.min(currentFocus + gridColumns * 5, currentPhotos.length - 1);
+      setFocusedIndex(newIndex);
+      props.onSelectPhoto(currentPhotos[newIndex]?.id || null);
+      scrollIntoView(newIndex);
+      return;
+    }
+
+    if (e.key === "PageUp") {
+      e.preventDefault();
+      const newIndex = Math.max(currentFocus - gridColumns * 5, 0);
+      setFocusedIndex(newIndex);
+      props.onSelectPhoto(currentPhotos[newIndex]?.id || null);
+      scrollIntoView(newIndex);
+      return;
+    }
+
+    if (e.key === "Enter") {
+      e.preventDefault();
+      // Enter opens loupe view - handled by AppShell
+      return;
+    }
+
+    // All remaining shortcuts require a selected photo
     const selected = props.selectedPhotoId;
     if (!selected) return;
 
-    // Rating: 0-5
+    // Rating: 0-5 (auto-advance to next after rating)
     if (e.key >= "0" && e.key <= "5") {
       e.preventDefault();
       const rating = parseInt(e.key);
       try {
         await invoke("update_rating", { photoId: selected, rating });
-        // Update local state
         setPhotos((prev) =>
           prev.map((p) => (p.id === selected ? { ...p, rating } : p))
         );
+        // Auto-advance to next photo
+        const newIndex = Math.min(currentFocus + 1, currentPhotos.length - 1);
+        if (newIndex > currentFocus) {
+          setFocusedIndex(newIndex);
+          props.onSelectPhoto(currentPhotos[newIndex]?.id || null);
+          scrollIntoView(newIndex);
+        }
       } catch (err) {
         console.error("Failed to update rating:", err);
       }
     }
 
-    // Flag: P = pick, X = reject, U = unflag
+    // Flag: P = pick, X = reject, U = unflag (auto-advance)
     if (e.key === "p" || e.key === "P") {
       e.preventDefault();
       try {
@@ -284,6 +412,12 @@ function LibraryGridView(props: LibraryGridViewProps) {
         setPhotos((prev) =>
           prev.map((p) => (p.id === selected ? { ...p, flag: "pick" } : p))
         );
+        const newIndex = Math.min(currentFocus + 1, currentPhotos.length - 1);
+        if (newIndex > currentFocus) {
+          setFocusedIndex(newIndex);
+          props.onSelectPhoto(currentPhotos[newIndex]?.id || null);
+          scrollIntoView(newIndex);
+        }
       } catch (err) {
         console.error("Failed to update flag:", err);
       }
@@ -296,6 +430,12 @@ function LibraryGridView(props: LibraryGridViewProps) {
         setPhotos((prev) =>
           prev.map((p) => (p.id === selected ? { ...p, flag: "reject" } : p))
         );
+        const newIndex = Math.min(currentFocus + 1, currentPhotos.length - 1);
+        if (newIndex > currentFocus) {
+          setFocusedIndex(newIndex);
+          props.onSelectPhoto(currentPhotos[newIndex]?.id || null);
+          scrollIntoView(newIndex);
+        }
       } catch (err) {
         console.error("Failed to update flag:", err);
       }
@@ -335,19 +475,6 @@ function LibraryGridView(props: LibraryGridViewProps) {
         );
       } catch (err) {
         console.error("Failed to update color label:", err);
-      }
-    }
-
-    // Arrow navigation
-    if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
-      e.preventDefault();
-      const currentIndex = photos().findIndex((p) => p.id === selected);
-      if (currentIndex === -1) return;
-
-      const newIndex =
-        e.key === "ArrowRight" ? currentIndex + 1 : currentIndex - 1;
-      if (newIndex >= 0 && newIndex < photos().length) {
-        props.onSelectPhoto(photos()[newIndex].id);
       }
     }
   };
@@ -461,12 +588,16 @@ function LibraryGridView(props: LibraryGridViewProps) {
             style={`grid-template-columns: repeat(auto-fill, minmax(${thumbnailSize()}px, 1fr))`}
           >
             <For each={photos()}>
-              {(photo) => (
+              {(photo, index) => (
                 <PhotoCard
                   photo={photo}
                   selected={props.selectedPhotoId === photo.id}
+                  focused={focusedIndex() === index()}
                   thumbnailSize={thumbnailSize()}
-                  onSelect={(id) => props.onSelectPhoto(id)}
+                  onSelect={(id) => {
+                    props.onSelectPhoto(id);
+                    setFocusedIndex(index());
+                  }}
                 />
               )}
             </For>
@@ -494,8 +625,13 @@ function DevelopView(props: DevelopViewProps) {
   const [previewUri, setPreviewUri] = createSignal<string | null>(null);
   const [rendering, setRendering] = createSignal(false);
   const [previewDims, setPreviewDims] = createSignal({ w: 0, h: 0 });
+  const [zoom, setZoom] = createSignal(0); // 0 = fit, 1.0 = 100%, 2.0 = 200%
+  const [pan, setPan] = createStore({ x: 0, y: 0 });
+  const [isPanning, setIsPanning] = createSignal(false);
+  const [panStart, setPanStart] = createStore({ x: 0, y: 0, panX: 0, panY: 0 });
 
   let renderTimer: ReturnType<typeof setTimeout> | null = null;
+  let imgContainerRef: HTMLDivElement | undefined;
 
   // Update preview when photo changes or recipe changes
   async function updatePreview(photoId: string, recipe?: any) {
@@ -531,7 +667,58 @@ function DevelopView(props: DevelopViewProps) {
     await updatePreview(id);
   });
 
-  // Keyboard shortcut for before/after toggle
+  // Zoom functions
+  function zoomIn() {
+    const current = zoom();
+    if (current === 0) setZoom(1.0); // fit -> 100%
+    else if (current === 1.0) setZoom(2.0); // 100% -> 200%
+    else if (current < 4.0) setZoom(Math.min(4.0, current + 0.5));
+  }
+
+  function zoomOut() {
+    const current = zoom();
+    if (current > 1.0) setZoom(Math.max(1.0, current - 0.5));
+    else setZoom(0); // -> fit
+  }
+
+  function zoomFit() {
+    setZoom(0);
+    setPan({ x: 0, y: 0 });
+  }
+
+  function zoom100() {
+    setZoom(1.0);
+    setPan({ x: 0, y: 0 });
+  }
+
+  function toggleFit100() {
+    if (zoom() === 0) zoom100();
+    else zoomFit();
+  }
+
+  // Mouse pan handling
+  function handleMouseDown(e: MouseEvent) {
+    if (zoom() > 0 && e.button === 0 && e.spaceKey !== undefined ? e.spaceKey : false) {
+      setIsPanning(true);
+      setPanStart({ x: e.clientX, y: e.clientY, panX: pan.x, panY: pan.y });
+      e.preventDefault();
+    }
+  }
+
+  function handleMouseMove(e: MouseEvent) {
+    if (isPanning()) {
+      const dx = e.clientX - panStart.x;
+      const dy = e.clientY - panStart.y;
+      setPan({ x: panStart.panX + dx, y: panStart.panY + dy });
+      e.preventDefault();
+    }
+  }
+
+  function handleMouseUp() {
+    setIsPanning(false);
+  }
+
+  // Keyboard shortcut for before/after toggle and zoom
   const handleKeyDown = (e: KeyboardEvent) => {
     if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
 
@@ -539,18 +726,73 @@ function DevelopView(props: DevelopViewProps) {
       e.preventDefault();
       const newMode = !beforeAfter();
       setBeforeAfter(newMode);
-      // Trigger re-render with or without recipe
       updatePreview(props.selectedPhotoId);
+    }
+
+    const mod = e.metaKey || e.ctrlKey;
+
+    // Zoom shortcuts
+    if (mod && (e.key === "=" || e.key === "+")) {
+      e.preventDefault();
+      zoomIn();
+    }
+    if (mod && e.key === "-") {
+      e.preventDefault();
+      zoomOut();
+    }
+    if (mod && e.key === "0") {
+      e.preventDefault();
+      if (e.altKey) zoom100(); // Cmd+Alt+0 = 1:1
+      else zoomFit(); // Cmd+0 = fit
+    }
+    if (e.key === "z" || e.key === "Z") {
+      e.preventDefault();
+      toggleFit100();
     }
   };
 
   onMount(() => {
     document.addEventListener("keydown", handleKeyDown);
+    document.addEventListener("mousemove", handleMouseMove);
+    document.addEventListener("mouseup", handleMouseUp);
     onCleanup(() => {
       document.removeEventListener("keydown", handleKeyDown);
+      document.removeEventListener("mousemove", handleMouseMove);
+      document.removeEventListener("mouseup", handleMouseUp);
       if (renderTimer) clearTimeout(renderTimer);
     });
   });
+
+  const zoomLabel = () => {
+    if (zoom() === 0) return "Fit";
+    return `${Math.round(zoom() * 100)}%`;
+  };
+
+  const containerStyle = () => {
+    if (zoom() === 0) return { overflow: "hidden" };
+    return { overflow: "auto", cursor: isPanning() ? "grabbing" : "grab" };
+  };
+
+  const imageStyle = () => {
+    if (zoom() === 0) {
+      return {
+        "max-width": "100%",
+        "max-height": "100%",
+        "object-fit": "contain",
+        opacity: rendering() ? "0.7" : "1",
+        transition: "opacity 0.1s",
+      };
+    }
+    return {
+      width: `${zoom() * 100}%`,
+      "max-width": "none",
+      "max-height": "none",
+      transform: `translate(${pan.x}px, ${pan.y}px)`,
+      opacity: rendering() ? "0.7" : "1",
+      transition: "opacity 0.1s",
+      cursor: "inherit",
+    };
+  };
 
   return (
     <div class="h-full flex flex-col">
@@ -569,6 +811,31 @@ function DevelopView(props: DevelopViewProps) {
         >
           {beforeAfter() ? "◀ Before" : "After ▶"} (\)
         </button>
+
+        {/* Zoom controls */}
+        <span class="text-[#333]">|</span>
+        <button
+          onClick={zoomOut}
+          class="text-xs px-2 py-0.5 text-[#666] hover:text-[#999] rounded hover:bg-[#2a2a2a]"
+          title="Zoom Out (Cmd+-)"
+        >
+          −
+        </button>
+        <span
+          class="text-xs text-[#888] min-w-[2.5rem] text-center cursor-pointer hover:text-[#aaa]"
+          onClick={zoomFit}
+          title="Click to fit (Cmd+0)"
+        >
+          {zoomLabel()}
+        </span>
+        <button
+          onClick={zoomIn}
+          class="text-xs px-2 py-0.5 text-[#666] hover:text-[#999] rounded hover:bg-[#2a2a2a]"
+          title="Zoom In (Cmd+=)"
+        >
+          +
+        </button>
+
         <Show when={rendering()}>
           <div class="w-3 h-3 border border-[#333] border-t-[#4a9eff] rounded-full animate-spin" />
         </Show>
@@ -580,7 +847,12 @@ function DevelopView(props: DevelopViewProps) {
       </div>
 
       {/* Image area */}
-      <div class="flex-1 overflow-hidden flex items-center justify-center bg-[#0f0f0f]">
+      <div
+        ref={imgContainerRef}
+        class="flex-1 flex items-center justify-center bg-[#0f0f0f]"
+        style={containerStyle()}
+        onMouseDown={handleMouseDown}
+      >
         <Show
           when={props.selectedPhotoId}
           fallback={
@@ -602,11 +874,8 @@ function DevelopView(props: DevelopViewProps) {
             {(uri) => (
               <img
                 src={uri()}
-                class="max-w-full max-h-full object-contain"
-                style={{
-                  opacity: rendering() ? "0.7" : "1",
-                  transition: "opacity 0.1s",
-                }}
+                class={zoom() === 0 ? "" : "pointer-events-none"}
+                style={imageStyle()}
               />
             )}
           </Show>
