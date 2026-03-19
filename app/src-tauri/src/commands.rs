@@ -1,5 +1,6 @@
 use std::sync::Mutex;
 use tauri::State;
+use base64::Engine;
 
 /// Sidecar sync mode
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -17,6 +18,7 @@ pub struct AppState {
     pub preset_library: Mutex<ocps_core::PresetLibrary>,
     pub sidecar_mode: Mutex<SidecarMode>,
     pub plugin_registry: Mutex<ocps_plugin_host::PluginRegistry>,
+    pub preview_cache: Mutex<ocps_core::preview_cache::PreviewCache>,
 }
 
 impl AppState {
@@ -38,12 +40,21 @@ impl AppState {
             .join("plugins");
         let _ = plugin_registry.scan_directory(&plugin_dir);
 
+        // Initialize preview cache
+        let cache_dir = dirs::cache_dir()
+            .unwrap_or_else(|| std::path::PathBuf::from("."))
+            .join("openclaw-photo-studio")
+            .join("previews");
+
+        let preview_cache = ocps_core::preview_cache::PreviewCache::new(cache_dir, 200);
+
         Self {
             catalog: Mutex::new(None),
             clipboard: Mutex::new(None),
             preset_library: Mutex::new(preset_library),
             sidecar_mode: Mutex::new(SidecarMode::Auto),
             plugin_registry: Mutex::new(plugin_registry),
+            preview_cache: Mutex::new(preview_cache),
         }
     }
 }
@@ -1241,4 +1252,233 @@ pub fn get_sidecar_mode(state: State<AppState>) -> String {
         SidecarMode::ReadOnly => "readonly".to_string(),
         SidecarMode::Disabled => "disabled".to_string(),
     }
+}
+
+// ========== PART C: Preview/Thumbnail Commands ==========
+
+/// Get thumbnail for a photo
+///
+/// # Arguments
+/// * `photo_id` - Photo ID from catalog
+/// * `max_size` - Maximum dimension (width or height) in pixels
+///
+/// # Returns
+/// * `Ok(Value)` - JSON with { data: "base64...", width: N, height: N, from_cache: bool }
+/// * `Err(String)` - Error message
+#[tauri::command]
+pub fn get_thumbnail(
+    state: State<AppState>,
+    photo_id: String,
+    max_size: u32,
+) -> Result<serde_json::Value, String> {
+    // Check preview cache first
+    let mut cache_lock = state.preview_cache.lock().unwrap();
+
+    if let Some(cached) = cache_lock.get(&photo_id) {
+        // Check if cached size matches (approximate check)
+        if cached.width <= max_size && cached.height <= max_size {
+            return Ok(serde_json::json!({
+                "data": cached.data_base64,
+                "width": cached.width,
+                "height": cached.height,
+                "from_cache": true,
+            }));
+        }
+    }
+
+    drop(cache_lock);
+
+    // Not in cache - generate thumbnail
+    let catalog_lock = state.catalog.lock().unwrap();
+    let catalog = catalog_lock
+        .as_ref()
+        .ok_or("No catalog open".to_string())?;
+
+    // Get photo path
+    let photo = catalog
+        .get_photo(&photo_id)
+        .map_err(|e| format!("Failed to get photo: {}", e))?
+        .ok_or("Photo not found".to_string())?;
+
+    drop(catalog_lock);
+
+    // Generate thumbnail
+    let req = ocps_core::thumbnail_service::ThumbnailRequest {
+        photo_path: photo.file_path.clone(),
+        max_size,
+        quality: 85,
+    };
+
+    let result = ocps_core::thumbnail_service::generate_thumbnail(&req)
+        .map_err(|e| format!("Failed to generate thumbnail: {}", e))?;
+
+    // Store in cache
+    let mut cache_lock = state.preview_cache.lock().unwrap();
+    cache_lock.put(
+        &photo_id,
+        ocps_core::preview_cache::CachedPreview {
+            data_base64: result.data_base64.clone(),
+            width: result.width,
+            height: result.height,
+            generated_at: std::time::SystemTime::now(),
+        },
+    );
+
+    Ok(serde_json::json!({
+        "data": result.data_base64,
+        "width": result.width,
+        "height": result.height,
+        "from_cache": false,
+    }))
+}
+
+/// Get full-size preview for a photo (for loupe/develop view)
+///
+/// # Arguments
+/// * `photo_id` - Photo ID from catalog
+///
+/// # Returns
+/// * `Ok(Value)` - JSON with { data: "base64...", width: N, height: N, from_cache: bool }
+/// * `Err(String)` - Error message
+#[tauri::command]
+pub fn get_preview(
+    state: State<AppState>,
+    photo_id: String,
+) -> Result<serde_json::Value, String> {
+    // Use get_thumbnail with 2048px max size
+    get_thumbnail(state, photo_id, 2048)
+}
+
+/// Invalidate preview cache for a photo
+///
+/// Called when edit recipe changes significantly
+#[tauri::command]
+pub fn invalidate_preview(
+    state: State<AppState>,
+    photo_id: String,
+) -> Result<(), String> {
+    let mut cache_lock = state.preview_cache.lock().unwrap();
+    cache_lock.invalidate(&photo_id);
+    Ok(())
+}
+
+/// Get cache statistics
+///
+/// # Returns
+/// * `Ok(Value)` - JSON with { ram_entries: N, disk_size_bytes: N }
+#[tauri::command]
+pub fn get_cache_stats(
+    state: State<AppState>,
+) -> Result<serde_json::Value, String> {
+    let cache_lock = state.preview_cache.lock().unwrap();
+
+    Ok(serde_json::json!({
+        "ram_entries": cache_lock.ram_entry_count(),
+        "disk_size_bytes": cache_lock.disk_cache_size_bytes(),
+    }))
+}
+
+/// Render preview with custom recipe (for live updates during editing)
+///
+/// This is called during slider drag and should be fast.
+/// Results are NOT cached.
+///
+/// # Arguments
+/// * `photo_id` - Photo ID
+/// * `recipe` - Edit recipe JSON
+/// * `max_size` - Maximum dimension
+///
+/// # Returns
+/// * `Ok(Value)` - JSON with { data: "base64...", width: N, height: N }
+#[tauri::command]
+pub fn render_preview_with_recipe(
+    state: State<AppState>,
+    photo_id: String,
+    recipe: serde_json::Value,
+    max_size: u32,
+) -> Result<serde_json::Value, String> {
+    let catalog_lock = state.catalog.lock().unwrap();
+    let catalog = catalog_lock
+        .as_ref()
+        .ok_or("No catalog open".to_string())?;
+
+    // Get photo path
+    let photo = catalog
+        .get_photo(&photo_id)
+        .map_err(|e| format!("Failed to get photo: {}", e))?
+        .ok_or("Photo not found".to_string())?;
+
+    let path = std::path::Path::new(&photo.file_path);
+    drop(catalog_lock);
+
+    // Parse recipe
+    let edit_recipe: ocps_core::EditRecipe = serde_json::from_value(recipe)
+        .map_err(|e| format!("Failed to parse recipe: {}", e))?;
+
+    // Load and process image
+    let is_raw = is_raw_file(path);
+
+    let image = if is_raw {
+        let raw = ocps_core::decode(path)
+            .map_err(|e| format!("Failed to decode RAW: {:?}", e))?;
+
+        let rgb = ocps_core::demosaic(&raw, ocps_core::DemosaicAlgorithm::Bilinear);
+
+        // Convert u8 → u16 for pipeline
+        let data_u16: Vec<u16> = rgb.data.iter().map(|&v| (v as u16) * 257).collect();
+
+        ocps_core::RgbImage16::from_data(rgb.width, rgb.height, data_u16)
+    } else {
+        let img = image::open(path)
+            .map_err(|e| format!("Failed to load image: {}", e))?;
+
+        let rgb = img.to_rgb16();
+        ocps_core::RgbImage16 {
+            width: rgb.width(),
+            height: rgb.height(),
+            data: rgb.into_raw(),
+        }
+    };
+
+    // Apply pipeline
+    let output = ocps_core::ImageProcessor::process(&image, &edit_recipe);
+
+    // Resize if needed
+    let (final_width, final_height, final_data) = if output.width > max_size || output.height > max_size {
+        let ratio = (max_size as f32) / output.width.max(output.height) as f32;
+        let new_width = (output.width as f32 * ratio) as u32;
+        let new_height = (output.height as f32 * ratio) as u32;
+
+        let img = image::RgbImage::from_raw(output.width, output.height, output.data.clone())
+            .ok_or("Failed to create image")?;
+
+        let resized = image::imageops::resize(
+            &img,
+            new_width,
+            new_height,
+            image::imageops::FilterType::Triangle,
+        );
+
+        (new_width, new_height, resized.into_raw())
+    } else {
+        (output.width, output.height, output.data)
+    };
+
+    // Encode as JPEG
+    let img = image::RgbImage::from_raw(final_width, final_height, final_data.clone())
+        .ok_or("Failed to create final image")?;
+
+    let mut buffer = std::io::Cursor::new(Vec::new());
+    let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buffer, 85);
+    img.write_with_encoder(encoder)
+        .map_err(|e| format!("JPEG encode failed: {}", e))?;
+
+    let jpeg_data = buffer.into_inner();
+    let base64_data = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &jpeg_data);
+
+    Ok(serde_json::json!({
+        "data": base64_data,
+        "width": final_width,
+        "height": final_height,
+    }))
 }

@@ -43,6 +43,11 @@ pub fn run() {
             commands::get_supported_formats,
             commands::set_sidecar_mode,
             commands::get_sidecar_mode,
+            commands::get_thumbnail,
+            commands::get_preview,
+            commands::invalidate_preview,
+            commands::get_cache_stats,
+            commands::render_preview_with_recipe,
         ])
         .setup(|app| {
             #[cfg(debug_assertions)]
