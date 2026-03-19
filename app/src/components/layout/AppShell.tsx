@@ -9,6 +9,7 @@ import { DiagnosticsView } from "../diagnostics/DiagnosticsView";
 import { ShortcutEngine } from "../../lib/shortcuts";
 
 type Module = "library" | "develop" | "map" | "print";
+type ViewMode = "grid" | "loupe" | "compare" | "survey";
 
 interface AppShellProps {
   version?: any;
@@ -16,6 +17,7 @@ interface AppShellProps {
 
 export function AppShell(props: AppShellProps) {
   const [activeModule, setActiveModule] = createSignal<Module>("library");
+  const [viewMode, setViewMode] = createSignal<ViewMode>("grid");
   const [leftOpen, setLeftOpen] = createSignal(true);
   const [rightOpen, setRightOpen] = createSignal(true);
   const [filmstripOpen, setFilmstripOpen] = createSignal(true);
@@ -28,8 +30,14 @@ export function AppShell(props: AppShellProps) {
   const shortcuts = new ShortcutEngine();
 
   // Register shortcut handlers
-  shortcuts.register("view.grid", () => setActiveModule("library"));
-  shortcuts.register("view.loupe", () => setActiveModule("library"));
+  shortcuts.register("view.grid", () => {
+    setActiveModule("library");
+    setViewMode("grid");
+  });
+  shortcuts.register("view.loupe", () => {
+    setActiveModule("library");
+    setViewMode("loupe");
+  });
   shortcuts.register("module.develop", () => setActiveModule("develop"));
   shortcuts.register("ui.toggle_panels", () => {
     setLeftOpen(o => !o);
@@ -37,6 +45,38 @@ export function AppShell(props: AppShellProps) {
   });
   shortcuts.register("ui.command_palette", () => setCommandPaletteOpen(true));
   shortcuts.register("ui.diagnostics", () => setDiagnosticsOpen(true));
+
+  // View mode shortcuts
+  const registerViewShortcuts = () => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+
+      // E = loupe view
+      if (e.key === "e" || e.key === "E") {
+        e.preventDefault();
+        setViewMode("loupe");
+      }
+      // C = compare mode
+      if (e.key === "c" || e.key === "C") {
+        e.preventDefault();
+        setViewMode("compare");
+      }
+      // N = survey mode
+      if (e.key === "n" || e.key === "N") {
+        e.preventDefault();
+        setViewMode("survey");
+      }
+      // G = grid (also handled by shortcuts.register)
+      if (e.key === "g" || e.key === "G") {
+        e.preventDefault();
+        setViewMode("grid");
+        setActiveModule("library");
+      }
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+    onCleanup(() => document.removeEventListener("keydown", handleKeyDown));
+  };
 
   // Set context based on active module
   const updateContext = () => {
@@ -59,6 +99,7 @@ export function AppShell(props: AppShellProps) {
 
   onMount(() => {
     updateContext();
+    registerViewShortcuts();
     document.addEventListener("keydown", handleKeyDown);
     onCleanup(() => document.removeEventListener("keydown", handleKeyDown));
   });
@@ -86,6 +127,7 @@ export function AppShell(props: AppShellProps) {
         <div class="flex flex-col flex-1 overflow-hidden">
           <MainView
             module={activeModule()}
+            viewMode={viewMode()}
             selectedPhotoId={selectedPhotoId()}
             selectedPhotoIds={selectedPhotoIds()}
             onSelectPhoto={setSelectedPhotoId}

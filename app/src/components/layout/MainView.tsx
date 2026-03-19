@@ -2,13 +2,17 @@ import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { createSignal, onMount, Show, For, onCleanup, createStore, createEffect } from "solid-js";
 import { FilterBar, FilterState } from "../library/FilterBar";
+import { CompareView } from "../library/CompareView";
+import { SurveyView } from "../library/SurveyView";
 import { MapView } from "../map/MapView";
 import { PrintView } from "../print/PrintView";
 
 type Module = "library" | "develop" | "map" | "print";
+type ViewMode = "grid" | "loupe" | "compare" | "survey";
 
 interface MainViewProps {
   module: Module;
+  viewMode: ViewMode;
   selectedPhotoId: string | null;
   selectedPhotoIds: string[];
   onSelectPhoto: (id: string | null) => void;
@@ -19,6 +23,7 @@ export function MainView(props: MainViewProps) {
     <main class="flex-1 overflow-hidden bg-[#141414] relative">
       {props.module === "library" && (
         <LibraryView
+          viewMode={props.viewMode}
           selectedPhotoId={props.selectedPhotoId}
           onSelectPhoto={props.onSelectPhoto}
         />
@@ -55,11 +60,38 @@ interface CatalogStats {
 }
 
 interface LibraryViewProps {
+  viewMode: ViewMode;
   selectedPhotoId: string | null;
   onSelectPhoto: (id: string | null) => void;
 }
 
 function LibraryView(props: LibraryViewProps) {
+  const [comparePhotoIds, setComparePhotoIds] = createSignal<[string, string]>(["photo1", "photo2"]);
+  const [surveyPhotoIds, setSurveyPhotoIds] = createSignal<string[]>(["p1", "p2", "p3", "p4", "p5", "p6"]);
+
+  const handleSwap = () => {
+    setComparePhotoIds(([a, b]) => [b, a]);
+  };
+
+  // Show compare/survey modes if active
+  if (props.viewMode === "compare") {
+    return <CompareView photoIds={comparePhotoIds()} onSwap={handleSwap} />;
+  }
+
+  if (props.viewMode === "survey") {
+    return <SurveyView photoIds={surveyPhotoIds()} />;
+  }
+
+  // Otherwise show grid or loupe (grid is the default implementation below)
+  return <LibraryGridView {...props} />;
+}
+
+interface LibraryGridViewProps {
+  selectedPhotoId: string | null;
+  onSelectPhoto: (id: string | null) => void;
+}
+
+function LibraryGridView(props: LibraryGridViewProps) {
   const [photos, setPhotos] = createSignal<Photo[]>([]);
   const [loading, setLoading] = createSignal(false);
   const [stats, setStats] = createSignal<CatalogStats | null>(null);

@@ -69,6 +69,15 @@ pub mod schema {
         )
     "#;
 
+    pub const CREATE_PHOTO_COLLECTIONS: &str = r#"
+        CREATE TABLE IF NOT EXISTS photo_collections (
+            photo_id        TEXT REFERENCES photos(id) ON DELETE CASCADE,
+            collection_id   TEXT REFERENCES collections(id) ON DELETE CASCADE,
+            added_at        TEXT DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (photo_id, collection_id)
+        )
+    "#;
+
     pub const CREATE_KEYWORDS: &str = r#"
         CREATE TABLE IF NOT EXISTS keywords (
             id              TEXT PRIMARY KEY,

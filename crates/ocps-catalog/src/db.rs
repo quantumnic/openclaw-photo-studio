@@ -39,6 +39,8 @@ impl Catalog {
         self.conn.execute_batch(crate::schema::CREATE_PHOTOS)?;
         self.conn
             .execute_batch(crate::schema::CREATE_COLLECTIONS)?;
+        self.conn
+            .execute_batch(crate::schema::CREATE_PHOTO_COLLECTIONS)?;
         self.conn.execute_batch(crate::schema::CREATE_KEYWORDS)?;
         self.conn
             .execute_batch(crate::schema::CREATE_PHOTO_KEYWORDS)?;
@@ -382,7 +384,7 @@ impl Catalog {
         let rules_json = serde_json::to_string(rules)?;
 
         self.conn.execute(
-            "INSERT INTO collections (id, name, type, query) VALUES (?, ?, 'smart', ?)",
+            "INSERT INTO collections (id, name, type, smart_rules, created_at, updated_at) VALUES (?, ?, 'smart', ?, datetime('now'), datetime('now'))",
             params![&id, name, &rules_json],
         )?;
 
@@ -761,6 +763,96 @@ impl Catalog {
     #[cfg(test)]
     pub fn conn_ref(&self) -> &Connection {
         &self.conn
+    }
+
+    /// Get count of rejected photos
+    pub fn get_rejected_count(&self) -> Result<u32> {
+        let count: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM photos WHERE flag = 'reject'",
+            [],
+            |row| row.get(0),
+        )?;
+        Ok(count as u32)
+    }
+
+    /// Delete all photos with a specific flag
+    pub fn delete_by_flag(&self, flag: &str) -> Result<u32> {
+        let deleted = self.conn.execute(
+            "DELETE FROM photos WHERE flag = ?",
+            params![flag],
+        )?;
+        Ok(deleted as u32)
+    }
+
+    /// Toggle photo in/out of quick collection (special collection named "_quick_collection")
+    /// Returns true if now in collection, false if removed
+    pub fn toggle_quick_collection(&self, photo_id: &str) -> Result<bool> {
+        // Ensure quick collection exists
+        let collection_id = self.get_or_create_collection("_quick_collection")?;
+
+        // Check if photo is already in the collection
+        let in_collection: bool = self.conn.query_row(
+            "SELECT 1 FROM photo_collections WHERE photo_id = ? AND collection_id = ? LIMIT 1",
+            params![photo_id, &collection_id],
+            |_| Ok(true),
+        ).unwrap_or(false);
+
+        if in_collection {
+            // Remove from collection
+            self.conn.execute(
+                "DELETE FROM photo_collections WHERE photo_id = ? AND collection_id = ?",
+                params![photo_id, &collection_id],
+            )?;
+            Ok(false)
+        } else {
+            // Add to collection
+            self.conn.execute(
+                "INSERT INTO photo_collections (photo_id, collection_id) VALUES (?, ?)",
+                params![photo_id, &collection_id],
+            )?;
+            Ok(true)
+        }
+    }
+
+    /// Get all photo IDs in the quick collection
+    pub fn get_quick_collection(&self) -> Result<Vec<String>> {
+        let collection_id = self.get_or_create_collection("_quick_collection")?;
+
+        let mut stmt = self.conn.prepare(
+            "SELECT photo_id FROM photo_collections WHERE collection_id = ?"
+        )?;
+
+        let photo_ids = stmt.query_map(params![&collection_id], |row| {
+            row.get::<_, String>(0)
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(photo_ids)
+    }
+
+    /// Get or create a collection by name, returning its ID
+    fn get_or_create_collection(&self, name: &str) -> Result<String> {
+        // Check if collection exists
+        let existing: Option<String> = self.conn.query_row(
+            "SELECT id FROM collections WHERE name = ? LIMIT 1",
+            params![name],
+            |row| row.get(0),
+        ).ok();
+
+        if let Some(id) = existing {
+            return Ok(id);
+        }
+
+        // Create new collection
+        let id = Uuid::new_v4().to_string();
+        let now = Utc::now().to_rfc3339();
+
+        self.conn.execute(
+            "INSERT INTO collections (id, name, type, created_at, updated_at) VALUES (?, ?, 'manual', ?, ?)",
+            params![&id, name, &now, &now],
+        )?;
+
+        Ok(id)
     }
 }
 
@@ -1171,5 +1263,79 @@ mod tests {
         assert!(catalog.get_photo(&ids[3]).unwrap().is_some());
         assert!(catalog.get_photo(&ids[4]).unwrap().is_some());
         assert!(catalog.get_photo(&ids[0]).unwrap().is_none());
+    }
+
+    #[test]
+    fn test_delete_by_flag_rejected() {
+        let catalog = Catalog::in_memory().unwrap();
+        let now = Utc::now().to_rfc3339();
+
+        // Insert 5 photos: 2 rejected, 3 normal
+        for i in 0..5 {
+            let id = Uuid::new_v4().to_string();
+            let flag = if i < 2 { "reject" } else { "none" };
+            catalog.conn.execute(
+                "INSERT INTO photos (id, file_path, file_name, file_size, date_imported, flag)
+                 VALUES (?, ?, ?, ?, ?, ?)",
+                params![&id, format!("/test{}.jpg", i), format!("test{}.jpg", i), 1000, &now, flag],
+            ).unwrap();
+        }
+
+        assert_eq!(catalog.photo_count().unwrap(), 5);
+        assert_eq!(catalog.get_rejected_count().unwrap(), 2);
+
+        // Delete all rejected
+        let deleted = catalog.delete_by_flag("reject").unwrap();
+        assert_eq!(deleted, 2);
+
+        // Verify 3 remain
+        assert_eq!(catalog.photo_count().unwrap(), 3);
+        assert_eq!(catalog.get_rejected_count().unwrap(), 0);
+    }
+
+    #[test]
+    fn test_quick_collection_toggle() {
+        let catalog = Catalog::in_memory().unwrap();
+        let now = Utc::now().to_rfc3339();
+        let id = Uuid::new_v4().to_string();
+
+        catalog.conn.execute(
+            "INSERT INTO photos (id, file_path, file_name, file_size, date_imported)
+             VALUES (?, ?, ?, ?, ?)",
+            params![&id, "/test.jpg", "test.jpg", 1000, &now],
+        ).unwrap();
+
+        // Toggle on -> should be in collection
+        let in_collection = catalog.toggle_quick_collection(&id).unwrap();
+        assert!(in_collection);
+
+        let photos_in_qc = catalog.get_quick_collection().unwrap();
+        assert_eq!(photos_in_qc.len(), 1);
+        assert_eq!(photos_in_qc[0], id);
+
+        // Toggle off -> should be removed
+        let in_collection = catalog.toggle_quick_collection(&id).unwrap();
+        assert!(!in_collection);
+
+        let photos_in_qc = catalog.get_quick_collection().unwrap();
+        assert_eq!(photos_in_qc.len(), 0);
+    }
+
+    #[test]
+    fn test_get_rejected_count() {
+        let catalog = Catalog::in_memory().unwrap();
+        let now = Utc::now().to_rfc3339();
+
+        // Insert 3 rejected photos
+        for i in 0..3 {
+            let id = Uuid::new_v4().to_string();
+            catalog.conn.execute(
+                "INSERT INTO photos (id, file_path, file_name, file_size, date_imported, flag)
+                 VALUES (?, ?, ?, ?, ?, 'reject')",
+                params![&id, format!("/test{}.jpg", i), format!("test{}.jpg", i), 1000, &now],
+            ).unwrap();
+        }
+
+        assert_eq!(catalog.get_rejected_count().unwrap(), 3);
     }
 }
