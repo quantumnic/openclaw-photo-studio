@@ -1,6 +1,7 @@
 import { createSignal, createEffect, onMount, onCleanup, Show } from "solid-js";
 import { createStore } from "solid-js/store";
 import { invoke } from "@tauri-apps/api/core";
+import { Histogram } from "../common/Histogram";
 
 type Module = "library" | "develop" | "map" | "print";
 
@@ -293,6 +294,10 @@ export function RightSidebar(props: RightSidebarProps) {
 
           {/* Panels */}
           <div class="flex-1 overflow-y-auto">
+            <PanelSection title="Histogram">
+              <Histogram photoId={props.selectedPhotoId} height={80} />
+            </PanelSection>
+
             <PanelSection title="Basic">
               <div class="mb-2">
                 <div class="text-xs text-[#666] mb-1">White Balance</div>
@@ -434,9 +439,7 @@ export function RightSidebar(props: RightSidebarProps) {
       {props.module === "library" && (
         <>
           <PanelSection title="Histogram">
-            <div class="bg-[#111] rounded h-20 flex items-center justify-center text-[#333] text-xs">
-              Histogram — Phase 2
-            </div>
+            <Histogram photoId={props.selectedPhotoId} height={80} />
           </PanelSection>
           <PanelSection title="Quick Develop">
             <div class="text-xs text-[#555] italic">Quick adjustments — Phase 2</div>

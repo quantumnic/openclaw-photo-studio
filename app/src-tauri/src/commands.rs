@@ -5,13 +5,24 @@ use tauri::State;
 pub struct AppState {
     pub catalog: Mutex<Option<ocps_catalog::Catalog>>,
     pub clipboard: Mutex<Option<ocps_core::EditClipboard>>,
+    pub preset_library: Mutex<ocps_core::PresetLibrary>,
 }
 
 impl AppState {
     pub fn new() -> Self {
+        // Initialize preset library with user directory
+        let user_dir = dirs::data_dir()
+            .unwrap_or_else(|| std::path::PathBuf::from("."))
+            .join("openclaw-photo-studio")
+            .join("presets");
+
+        let mut preset_library = ocps_core::PresetLibrary::new(user_dir);
+        let _ = preset_library.load_user_presets(); // Load user presets if they exist
+
         Self {
             catalog: Mutex::new(None),
             clipboard: Mutex::new(None),
+            preset_library: Mutex::new(preset_library),
         }
     }
 }
@@ -568,4 +579,118 @@ pub fn export_photo_jpeg(
         "output_path": output_path,
         "duration_ms": duration_ms,
     }))
+}
+
+/// Compute histogram for a photo
+///
+/// # Arguments
+/// * `photo_id` - Photo ID to compute histogram for
+///
+/// # Returns
+/// * `Ok(Value)` - JSON object with histogram data (red, green, blue, luma arrays of 256 values)
+/// * `Err(String)` - Error message if computation fails
+#[tauri::command]
+pub fn compute_histogram(_photo_id: String) -> Result<serde_json::Value, String> {
+    // For now, return synthetic histogram data
+    // Real render pipeline integration will happen in Phase 3
+
+    // Generate a synthetic histogram with a bell curve distribution
+    let mut red = [0u32; 256];
+    let mut green = [0u32; 256];
+    let mut blue = [0u32; 256];
+    let mut luma = [0u32; 256];
+
+    // Create a bell curve centered around 128
+    for i in 0..256 {
+        let distance = (i as f32 - 128.0).abs();
+        let value = (1000.0 * (-distance * distance / 2000.0).exp()) as u32;
+
+        red[i] = value;
+        green[i] = (value as f32 * 1.1) as u32; // Slightly brighter green
+        blue[i] = (value as f32 * 0.9) as u32;  // Slightly darker blue
+        luma[i] = value;
+    }
+
+    Ok(serde_json::json!({
+        "red": red.to_vec(),
+        "green": green.to_vec(),
+        "blue": blue.to_vec(),
+        "luma": luma.to_vec(),
+    }))
+}
+
+/// Get all available presets (builtin + user)
+///
+/// # Returns
+/// * `Vec<Value>` - Array of preset objects
+#[tauri::command]
+pub fn get_presets(state: State<AppState>) -> Vec<serde_json::Value> {
+    let library = state.preset_library.lock().unwrap();
+    let presets = library.all();
+
+    presets
+        .iter()
+        .map(|preset| {
+            serde_json::json!({
+                "id": preset.id,
+                "name": preset.name,
+                "group": preset.group,
+                "description": preset.description,
+                "is_builtin": preset.is_builtin,
+            })
+        })
+        .collect()
+}
+
+/// Apply a preset to a photo
+///
+/// # Arguments
+/// * `photo_id` - Photo ID to apply preset to
+/// * `preset_id` - Preset ID to apply
+///
+/// # Returns
+/// * `Ok(Value)` - The updated recipe as JSON
+/// * `Err(String)` - Error message if application fails
+#[tauri::command]
+pub fn apply_preset(
+    photo_id: String,
+    preset_id: String,
+    state: State<AppState>,
+) -> Result<serde_json::Value, String> {
+    let catalog_lock = state.catalog.lock().unwrap();
+    let catalog = catalog_lock
+        .as_ref()
+        .ok_or("No catalog open".to_string())?;
+
+    // Load current recipe
+    let current_recipe_json = catalog
+        .load_edit(&photo_id)
+        .map_err(|e| format!("Failed to load current recipe: {}", e))?
+        .unwrap_or_else(|| serde_json::to_string(&ocps_core::EditRecipe::default()).unwrap());
+
+    let current_recipe: ocps_core::EditRecipe = serde_json::from_str(&current_recipe_json)
+        .map_err(|e| format!("Failed to parse recipe: {}", e))?;
+
+    // Get preset
+    let library = state.preset_library.lock().unwrap();
+    let all_presets = library.all();
+    let preset = all_presets
+        .iter()
+        .find(|p| p.id == preset_id)
+        .ok_or_else(|| format!("Preset not found: {}", preset_id))?;
+
+    // Apply preset
+    let new_recipe = ocps_core::PresetLibrary::apply(preset, &current_recipe);
+
+    // Save the new recipe
+    let new_recipe_json = serde_json::to_string(&new_recipe)
+        .map_err(|e| format!("Failed to serialize recipe: {}", e))?;
+
+    catalog
+        .save_edit(&photo_id, &new_recipe_json)
+        .map_err(|e| format!("Failed to save recipe: {}", e))?;
+
+    // Return the new recipe
+    serde_json::to_value(&new_recipe)
+        .map_err(|e| format!("Failed to convert recipe to JSON: {}", e))
 }

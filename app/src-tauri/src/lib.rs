@@ -26,6 +26,9 @@ pub fn run() {
             commands::paste_edit,
             commands::reset_edit,
             commands::export_photo_jpeg,
+            commands::compute_histogram,
+            commands::get_presets,
+            commands::apply_preset,
         ])
         .setup(|app| {
             #[cfg(debug_assertions)]

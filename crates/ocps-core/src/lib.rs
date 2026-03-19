@@ -26,6 +26,14 @@ pub mod edit;
 
 pub use edit::{EditClipboard, EditCopyPaste, EditModule};
 
+pub mod histogram;
+
+pub use histogram::Histogram;
+
+pub mod presets;
+
+pub use presets::{Preset, PresetLibrary};
+
 pub mod cache {
     //! Preview and thumbnail cache management
 
