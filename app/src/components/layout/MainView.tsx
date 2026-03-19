@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { createSignal, onMount, Show, For, onCleanup, createStore, createEffect } from "solid-js";
 import { FilterBar, FilterState } from "../library/FilterBar";
+import { MapView } from "../map/MapView";
 
 type Module = "library" | "develop" | "map" | "print";
 
@@ -21,7 +22,7 @@ export function MainView(props: MainViewProps) {
         />
       )}
       {props.module === "develop" && <DevelopView selectedPhotoId={props.selectedPhotoId} />}
-      {props.module === "map" && <PlaceholderView label="Map" emoji="🗺️" phase="Phase 5" />}
+      {props.module === "map" && <MapView />}
       {props.module === "print" && <PlaceholderView label="Print / Contact Sheet" emoji="🖨️" phase="Phase 7" />}
     </main>
   );

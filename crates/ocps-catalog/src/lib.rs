@@ -3,6 +3,7 @@
 //! SQLite-based catalog with FTS5 search, collections, keywords.
 
 pub mod db;
+pub mod geo;
 pub mod metadata_template;
 pub mod models;
 
@@ -115,6 +116,7 @@ pub mod schema {
 
 // Re-export main types for convenience
 pub use db::Catalog;
+pub use geo::GeoPhoto;
 pub use models::{ImportResult, PhotoFilter, PhotoRecord, SortOrder};
 
 #[cfg(test)]

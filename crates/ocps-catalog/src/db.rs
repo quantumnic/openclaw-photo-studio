@@ -11,7 +11,7 @@ use uuid::Uuid;
 use walkdir::WalkDir;
 
 pub struct Catalog {
-    conn: Connection,
+    pub(crate) conn: Connection,
 }
 
 impl Catalog {
