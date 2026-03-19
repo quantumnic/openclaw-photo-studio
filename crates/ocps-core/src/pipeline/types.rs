@@ -276,6 +276,61 @@ impl Default for ColorGradingSettings {
     }
 }
 
+/// Brush stroke data for painting masks
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct BrushStroke {
+    pub points: Vec<(f32, f32)>, // normalized 0.0-1.0 coordinates
+    pub size: f32,               // brush size in normalized units
+    pub feather: f32,            // feather amount 0.0-1.0
+    pub flow: f32,               // flow/opacity 0.0-1.0
+    pub erase: bool,             // true = eraser mode
+}
+
+/// Mask type for local adjustments
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub enum MaskType {
+    /// Brush mask with painted strokes
+    Brush { strokes: Vec<BrushStroke> },
+    /// Linear gradient mask
+    Gradient {
+        start_x: f32,
+        start_y: f32,
+        end_x: f32,
+        end_y: f32,
+    },
+    /// Radial gradient mask
+    Radial {
+        center_x: f32,
+        center_y: f32,
+        radius_x: f32,
+        radius_y: f32,
+        feather: f32,
+        invert: bool,
+    },
+}
+
+/// Settings for a local adjustment
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
+pub struct LocalSettings {
+    pub exposure: f32,    // -5.0 to +5.0
+    pub contrast: i32,    // -100 to +100
+    pub highlights: i32,  // -100 to +100
+    pub shadows: i32,     // -100 to +100
+    pub clarity: i32,     // -100 to +100
+    pub saturation: i32,  // -100 to +100
+    pub sharpness: i32,   // -100 to +100
+}
+
+/// Local adjustment with mask and settings
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct LocalAdjustment {
+    pub id: String,              // UUID
+    pub mask_type: MaskType,     // brush, gradient, or radial
+    pub settings: LocalSettings, // adjustment parameters
+    pub enabled: bool,           // can be toggled on/off
+    pub order: u32,              // rendering order
+}
+
 /// Complete edit recipe for an image
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
 pub struct EditRecipe {
@@ -298,6 +353,7 @@ pub struct EditRecipe {
     pub hsl: HslAdjustments,
     pub color_grading_new: ColorGrading,
     pub lens_corrections: LensCorrections,
+    pub local_adjustments: Vec<LocalAdjustment>,
 }
 
 impl EditRecipe {
@@ -382,5 +438,126 @@ mod tests {
         let mut recipe2 = EditRecipe::default();
         recipe2.exposure = 1.0;
         assert!(!recipe2.is_identity());
+    }
+
+    #[test]
+    fn test_local_adjustment_serialization() {
+        use uuid::Uuid;
+
+        // Create a local adjustment with brush
+        let adjustment = LocalAdjustment {
+            id: Uuid::new_v4().to_string(),
+            mask_type: MaskType::Brush {
+                strokes: vec![
+                    BrushStroke {
+                        points: vec![(0.5, 0.5), (0.6, 0.6)],
+                        size: 0.1,
+                        feather: 0.5,
+                        flow: 0.8,
+                        erase: false,
+                    },
+                ],
+            },
+            settings: LocalSettings {
+                exposure: 0.5,
+                contrast: 10,
+                ..Default::default()
+            },
+            enabled: true,
+            order: 0,
+        };
+
+        // Serialize to JSON
+        let json = serde_json::to_string(&adjustment).unwrap();
+        assert!(json.contains("Brush"));
+        assert!(json.contains("exposure"));
+
+        // Deserialize back
+        let deserialized: LocalAdjustment = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.id, adjustment.id);
+        assert_eq!(deserialized.enabled, true);
+        assert_eq!(deserialized.settings.exposure, 0.5);
+
+        // Check mask type
+        match deserialized.mask_type {
+            MaskType::Brush { strokes } => {
+                assert_eq!(strokes.len(), 1);
+                assert_eq!(strokes[0].points.len(), 2);
+            }
+            _ => panic!("Expected Brush mask type"),
+        }
+    }
+
+    #[test]
+    fn test_gradient_mask_serialization() {
+        use uuid::Uuid;
+
+        let adjustment = LocalAdjustment {
+            id: Uuid::new_v4().to_string(),
+            mask_type: MaskType::Gradient {
+                start_x: 0.0,
+                start_y: 0.0,
+                end_x: 1.0,
+                end_y: 1.0,
+            },
+            settings: LocalSettings {
+                exposure: -1.0,
+                ..Default::default()
+            },
+            enabled: true,
+            order: 1,
+        };
+
+        let json = serde_json::to_string(&adjustment).unwrap();
+        let deserialized: LocalAdjustment = serde_json::from_str(&json).unwrap();
+
+        match deserialized.mask_type {
+            MaskType::Gradient { start_x, start_y, end_x, end_y } => {
+                assert_eq!(start_x, 0.0);
+                assert_eq!(start_y, 0.0);
+                assert_eq!(end_x, 1.0);
+                assert_eq!(end_y, 1.0);
+            }
+            _ => panic!("Expected Gradient mask type"),
+        }
+    }
+
+    #[test]
+    fn test_radial_mask_serialization() {
+        use uuid::Uuid;
+
+        let adjustment = LocalAdjustment {
+            id: Uuid::new_v4().to_string(),
+            mask_type: MaskType::Radial {
+                center_x: 0.5,
+                center_y: 0.5,
+                radius_x: 0.3,
+                radius_y: 0.3,
+                feather: 0.5,
+                invert: false,
+            },
+            settings: LocalSettings {
+                clarity: 50,
+                saturation: -20,
+                ..Default::default()
+            },
+            enabled: true,
+            order: 2,
+        };
+
+        let json = serde_json::to_string(&adjustment).unwrap();
+        let deserialized: LocalAdjustment = serde_json::from_str(&json).unwrap();
+
+        match deserialized.mask_type {
+            MaskType::Radial { center_x, center_y, radius_x, radius_y, feather, invert } => {
+                assert_eq!(center_x, 0.5);
+                assert_eq!(center_y, 0.5);
+                assert_eq!(radius_x, 0.3);
+                assert_eq!(radius_y, 0.3);
+                assert_eq!(feather, 0.5);
+                assert_eq!(invert, false);
+            }
+            _ => panic!("Expected Radial mask type"),
+        }
     }
 }
