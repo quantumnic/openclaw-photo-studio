@@ -156,10 +156,31 @@ pub fn get_catalog_info(state: State<AppState>) -> serde_json::Value {
 
     if let Some(ref catalog) = *catalog_lock {
         match catalog.photo_count() {
-            Ok(count) => serde_json::json!({
-                "status": "open",
-                "photo_count": count,
-            }),
+            Ok(count) => {
+                // Get catalog path from database path
+                let db_path = catalog.database_path();
+                let catalog_path = db_path.to_string_lossy().to_string();
+
+                // Try to get creation/modification time
+                let metadata = std::fs::metadata(db_path).ok();
+                let created_at = metadata
+                    .as_ref()
+                    .and_then(|m| m.created().ok())
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_secs());
+                let modified_at = metadata
+                    .and_then(|m| m.modified().ok())
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_secs());
+
+                serde_json::json!({
+                    "status": "open",
+                    "photo_count": count,
+                    "catalog_path": catalog_path,
+                    "created_at": created_at,
+                    "modified_at": modified_at,
+                })
+            }
             Err(e) => serde_json::json!({
                 "status": "error",
                 "message": format!("{}", e),
@@ -169,9 +190,95 @@ pub fn get_catalog_info(state: State<AppState>) -> serde_json::Value {
         serde_json::json!({
             "status": "no_catalog_open",
             "photo_count": 0,
-            "message": "No catalog open. Use import_folder to start."
+            "catalog_path": null,
+            "message": "No catalog open. Use import_folder or open_catalog to start."
         })
     }
+}
+
+/// Open an existing catalog from a specific .ocps file
+#[tauri::command]
+pub fn open_catalog(
+    state: State<AppState>,
+    catalog_path: String,
+) -> Result<serde_json::Value, CommandError> {
+    let path = std::path::Path::new(&catalog_path);
+
+    if !path.exists() {
+        return Err(CommandError::file_not_found(&catalog_path));
+    }
+
+    // Close existing catalog if any
+    {
+        let mut catalog_lock = state.catalog.lock().unwrap();
+        *catalog_lock = None;
+    }
+
+    // Open the catalog
+    let catalog = ocps_catalog::Catalog::open(path)
+        .map_err(|e| CommandError::catalog_error("open catalog", e))?;
+
+    let photo_count = catalog
+        .photo_count()
+        .map_err(|e| CommandError::catalog_error("get photo count", e))?;
+
+    // Store in state
+    {
+        let mut catalog_lock = state.catalog.lock().unwrap();
+        *catalog_lock = Some(catalog);
+    }
+
+    Ok(serde_json::json!({
+        "photo_count": photo_count,
+        "catalog_path": catalog_path,
+    }))
+}
+
+/// Close the current catalog
+#[tauri::command]
+pub fn close_catalog(state: State<AppState>) -> Result<(), CommandError> {
+    let mut catalog_lock = state.catalog.lock().unwrap();
+    *catalog_lock = None;
+
+    // Also clear histories
+    let mut histories = state.histories.lock().unwrap();
+    histories.clear();
+
+    Ok(())
+}
+
+/// Create a new empty catalog at the specified path
+#[tauri::command]
+pub fn new_catalog(
+    state: State<AppState>,
+    catalog_path: String,
+) -> Result<(), CommandError> {
+    let path = std::path::Path::new(&catalog_path);
+
+    // Check if parent directory exists
+    if let Some(parent) = path.parent() {
+        if !parent.exists() {
+            return Err(CommandError::file_not_found(parent.to_str().unwrap_or("")));
+        }
+    }
+
+    // Close existing catalog
+    {
+        let mut catalog_lock = state.catalog.lock().unwrap();
+        *catalog_lock = None;
+    }
+
+    // Create new catalog
+    let catalog = ocps_catalog::Catalog::open(path)
+        .map_err(|e| CommandError::catalog_error("create catalog", e))?;
+
+    // Store in state
+    {
+        let mut catalog_lock = state.catalog.lock().unwrap();
+        *catalog_lock = Some(catalog);
+    }
+
+    Ok(())
 }
 
 /// Import a folder of photos into the catalog

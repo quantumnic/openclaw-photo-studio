@@ -12,6 +12,7 @@ use walkdir::WalkDir;
 
 pub struct Catalog {
     pub(crate) conn: Connection,
+    pub(crate) path: Option<std::path::PathBuf>,
 }
 
 impl Catalog {
@@ -19,7 +20,10 @@ impl Catalog {
     pub fn open(path: &Path) -> Result<Self> {
         let conn = Connection::open(path)?;
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
-        let catalog = Self { conn };
+        let catalog = Self {
+            conn,
+            path: Some(path.to_path_buf()),
+        };
         catalog.initialize()?;
         Ok(catalog)
     }
@@ -28,9 +32,17 @@ impl Catalog {
     pub fn in_memory() -> Result<Self> {
         let conn = Connection::open_in_memory()?;
         conn.execute_batch("PRAGMA foreign_keys=ON;")?;
-        let catalog = Self { conn };
+        let catalog = Self {
+            conn,
+            path: None,
+        };
         catalog.initialize()?;
         Ok(catalog)
+    }
+
+    /// Get the database path (if not in-memory)
+    pub fn database_path(&self) -> &Path {
+        self.path.as_deref().unwrap_or(Path::new(":memory:"))
     }
 
     fn initialize(&self) -> Result<()> {
