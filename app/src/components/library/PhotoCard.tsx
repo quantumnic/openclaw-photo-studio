@@ -12,6 +12,7 @@ interface Photo {
 interface PhotoCardProps {
   photo: Photo;
   selected: boolean;
+  focused?: boolean;
   thumbnailSize: number;
   onSelect: (id: string) => void;
 }
@@ -75,8 +76,9 @@ export function PhotoCard(props: PhotoCardProps) {
   return (
     <div
       ref={cardRef}
+      data-photo-card
       class={`relative bg-[#1a1a1a] rounded overflow-hidden cursor-pointer group
-        ${props.selected ? "ring-2 ring-[#4a9eff]" : "hover:ring-1 hover:ring-[#444]"}
+        ${props.selected ? "ring-2 ring-[#4a9eff]" : props.focused ? "ring-2 ring-[#888]" : "hover:ring-1 hover:ring-[#444]"}
       `}
       style={`aspect-ratio: 3/2`}
       onClick={() => props.onSelect(props.photo.id)}

@@ -6,6 +6,7 @@ import { MainView } from "./MainView";
 import { Filmstrip } from "./Filmstrip";
 import { CommandPalette } from "../common/CommandPalette";
 import { DiagnosticsView } from "../diagnostics/DiagnosticsView";
+import { ToastContainer } from "../common/Toast";
 import { ShortcutEngine } from "../../lib/shortcuts";
 
 type Module = "library" | "develop" | "map" | "print";
@@ -23,6 +24,7 @@ export function AppShell(props: AppShellProps) {
   const [filmstripOpen, setFilmstripOpen] = createSignal(true);
   const [selectedPhotoId, setSelectedPhotoId] = createSignal<string | null>(null);
   const [selectedPhotoIds, setSelectedPhotoIds] = createSignal<string[]>([]);
+  const [allPhotoIds, setAllPhotoIds] = createSignal<string[]>([]);
   const [commandPaletteOpen, setCommandPaletteOpen] = createSignal(false);
   const [diagnosticsOpen, setDiagnosticsOpen] = createSignal(false);
 
@@ -131,9 +133,14 @@ export function AppShell(props: AppShellProps) {
             selectedPhotoId={selectedPhotoId()}
             selectedPhotoIds={selectedPhotoIds()}
             onSelectPhoto={setSelectedPhotoId}
+            onPhotosLoaded={setAllPhotoIds}
           />
           <Show when={filmstripOpen()}>
-            <Filmstrip />
+            <Filmstrip
+              photoIds={allPhotoIds()}
+              selectedId={selectedPhotoId()}
+              onSelect={setSelectedPhotoId}
+            />
           </Show>
         </div>
 
@@ -154,6 +161,9 @@ export function AppShell(props: AppShellProps) {
       <Show when={diagnosticsOpen()}>
         <DiagnosticsView onClose={() => setDiagnosticsOpen(false)} />
       </Show>
+
+      {/* Toast Notifications */}
+      <ToastContainer />
     </div>
   );
 }
