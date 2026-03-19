@@ -1,0 +1,27 @@
+# OpenClaw Photo Studio - Benchmarks (2026-03-19)
+
+## Test Results
+- Total tests passing: 219
+- All tests passing: ✅
+- Clippy warnings: 0
+
+## Notes
+- Benchmarks require fixing after recent pipeline refactoring
+- Core functionality tests all passing
+- Catalog integrity tests: 3 new tests added
+- Edit history tests: 5 new tests added
+- Export naming templates: 12 new tests added
+
+## Test Breakdown
+- ocps-catalog: 39 tests ✅
+- ocps-core: 127 tests ✅
+- ocps-export: 15 tests ✅
+- ocps-xmp: 27 tests ✅
+- ocps-plugin-host: 7 tests ✅
+- ocps-app: 4 tests ✅
+
+## New Features Tested
+1. Catalog backup and recovery
+2. Edit history with undo/redo (50-entry stack)
+3. Export naming template engine
+4. Robust error handling with CommandError type
