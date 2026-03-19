@@ -6,6 +6,7 @@ import { CompareView } from "../library/CompareView";
 import { SurveyView } from "../library/SurveyView";
 import { MapView } from "../map/MapView";
 import { PrintView } from "../print/PrintView";
+import { PhotoCard } from "../library/PhotoCard";
 
 type Module = "library" | "develop" | "map" | "print";
 type ViewMode = "grid" | "loupe" | "compare" | "survey";
@@ -382,66 +383,12 @@ function LibraryGridView(props: LibraryGridViewProps) {
           >
             <For each={photos()}>
               {(photo) => (
-                <div
-                  onClick={() => props.onSelectPhoto(photo.id)}
-                  class={`relative bg-[#1a1a1a] rounded overflow-hidden cursor-pointer group hover:ring-1 hover:ring-[#4a9eff] transition-all aspect-[3/2] ${
-                    props.selectedPhotoId === photo.id
-                      ? "ring-2 ring-[#4a9eff]"
-                      : ""
-                  }`}
-                >
-                  {/* Placeholder image (thumbnail loading comes later) */}
-                  <div class="absolute inset-0 bg-gradient-to-br from-[#222] to-[#111] flex items-center justify-center">
-                    <span class="text-[#333] text-2xl">📷</span>
-                  </div>
-
-                  {/* File name overlay */}
-                  <div class="absolute top-0 left-0 right-0 px-1 py-0.5 bg-black/60 text-[8px] text-[#aaa] truncate opacity-0 group-hover:opacity-100 transition-opacity">
-                    {photo.file_name}
-                  </div>
-
-                  {/* Info overlay */}
-                  <div class="absolute bottom-0 left-0 right-0 px-1 py-0.5 bg-black/60 flex items-center gap-1">
-                    {/* Rating stars */}
-                    <div class="flex gap-0.5">
-                      <For each={Array.from({ length: 5 })}>
-                        {(_, i) => (
-                          <span
-                            class={`text-[8px] ${
-                              i() < photo.rating
-                                ? "text-[#e8b84b]"
-                                : "text-[#333]"
-                            }`}
-                          >
-                            ★
-                          </span>
-                        )}
-                      </For>
-                    </div>
-
-                    {/* Flag indicator */}
-                    {photo.flag === "pick" && (
-                      <span class="text-[8px] text-[#4a9eff] ml-auto font-bold">
-                        P
-                      </span>
-                    )}
-                    {photo.flag === "reject" && (
-                      <span class="text-[8px] text-[#ff4a4a] ml-auto font-bold">
-                        X
-                      </span>
-                    )}
-
-                    {/* Color label dot */}
-                    {photo.color_label !== "none" && (
-                      <div
-                        class="w-1.5 h-1.5 rounded-full ml-auto"
-                        style={`background-color: ${
-                          colorLabelColors[photo.color_label]
-                        }`}
-                      />
-                    )}
-                  </div>
-                </div>
+                <PhotoCard
+                  photo={photo}
+                  selected={props.selectedPhotoId === photo.id}
+                  thumbnailSize={thumbnailSize()}
+                  onSelect={(id) => props.onSelectPhoto(id)}
+                />
               )}
             </For>
           </div>
