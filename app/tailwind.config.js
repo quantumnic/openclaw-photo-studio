@@ -50,6 +50,15 @@ export default {
         base:  "13px",
         lg:    "14px",
       },
+      animation: {
+        spin: "spin 1s linear infinite",
+      },
+      keyframes: {
+        spin: {
+          from: { transform: "rotate(0deg)" },
+          to: { transform: "rotate(360deg)" },
+        },
+      },
     },
   },
   plugins: [],

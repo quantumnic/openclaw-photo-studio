@@ -83,8 +83,87 @@ function LibraryView(props: LibraryViewProps) {
     return <SurveyView photoIds={surveyPhotoIds()} />;
   }
 
-  // Otherwise show grid or loupe (grid is the default implementation below)
+  // Show loupe view if selected and in loupe mode
+  if (props.viewMode === "loupe" && props.selectedPhotoId) {
+    return (
+      <LoupeView
+        photoId={props.selectedPhotoId}
+        onBack={() => props.onSelectPhoto(null)}
+      />
+    );
+  }
+
+  // Otherwise show grid
   return <LibraryGridView {...props} />;
+}
+
+interface LoupeViewProps {
+  photoId: string;
+  onBack: () => void;
+}
+
+function LoupeView(props: LoupeViewProps) {
+  const [previewUri, setPreviewUri] = createSignal<string | null>(null);
+  const [photo, setPhoto] = createSignal<Photo | null>(null);
+  const [loading, setLoading] = createSignal(true);
+
+  onMount(async () => {
+    try {
+      // Load full photo info
+      const p = await invoke<Photo>("get_photo", { photoId: props.photoId });
+      setPhoto(p);
+
+      // Load large preview
+      const result = await invoke<{ data_uri: string }>("render_preview", {
+        photoId: props.photoId,
+        recipe: null,
+        maxWidth: 1920,
+        maxHeight: 1080,
+      });
+      setPreviewUri(result.data_uri);
+    } catch (e) {
+      console.error("Failed to load loupe view:", e);
+    } finally {
+      setLoading(false);
+    }
+  });
+
+  return (
+    <div class="h-full flex flex-col bg-[#0f0f0f]">
+      <div class="h-8 bg-[#1a1a1a] border-b border-[#2a2a2a] flex items-center px-3 gap-2 flex-shrink-0">
+        <button
+          onClick={props.onBack}
+          class="text-xs text-[#666] hover:text-[#aaa]"
+        >
+          ← Grid (G)
+        </button>
+        <Show when={photo()}>
+          {(p) => (
+            <span class="text-xs text-[#555]">{p().file_name}</span>
+          )}
+        </Show>
+      </div>
+      <div class="flex-1 flex items-center justify-center">
+        <Show
+          when={!loading() && previewUri()}
+          fallback={
+            <div class="flex flex-col items-center gap-3 text-[#444]">
+              <div class="w-8 h-8 border-2 border-[#333] border-t-[#4a9eff] rounded-full animate-spin" />
+              <span class="text-xs">Loading photo...</span>
+            </div>
+          }
+        >
+          {(uri) => (
+            <img
+              src={uri()}
+              class="max-w-full max-h-full object-contain"
+              alt={photo()?.file_name || "Photo"}
+            />
+          )}
+        </Show>
+      </div>
+    </div>
+  );
 }
 
 interface LibraryGridViewProps {
@@ -411,60 +490,128 @@ interface DevelopViewProps {
 }
 
 function DevelopView(props: DevelopViewProps) {
-  const [beforeAfterMode, setBeforeAfterMode] = createSignal(false);
+  const [beforeAfter, setBeforeAfter] = createSignal(false);
+  const [previewUri, setPreviewUri] = createSignal<string | null>(null);
+  const [rendering, setRendering] = createSignal(false);
+  const [previewDims, setPreviewDims] = createSignal({ w: 0, h: 0 });
 
-  // Keyboard shortcut for before/after
+  let renderTimer: ReturnType<typeof setTimeout> | null = null;
+
+  // Update preview when photo changes or recipe changes
+  async function updatePreview(photoId: string, recipe?: any) {
+    setRendering(true);
+    try {
+      const result = await invoke<{
+        data_uri: string;
+        width: number;
+        height: number;
+        duration_ms: number;
+      }>("render_preview", {
+        photoId,
+        recipe: beforeAfter() ? null : recipe, // null = before (default recipe)
+        maxWidth: 1200,
+        maxHeight: 800,
+      });
+      setPreviewUri(result.data_uri);
+      setPreviewDims({ w: result.width, h: result.height });
+    } catch (e) {
+      console.error("Render failed:", e);
+    } finally {
+      setRendering(false);
+    }
+  }
+
+  // Load preview when photo changes
+  createEffect(async () => {
+    const id = props.selectedPhotoId;
+    if (!id) {
+      setPreviewUri(null);
+      return;
+    }
+    await updatePreview(id);
+  });
+
+  // Keyboard shortcut for before/after toggle
   const handleKeyDown = (e: KeyboardEvent) => {
     if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
 
     if (e.key === "\\" && props.selectedPhotoId) {
       e.preventDefault();
-      setBeforeAfterMode((m) => !m);
+      const newMode = !beforeAfter();
+      setBeforeAfter(newMode);
+      // Trigger re-render with or without recipe
+      updatePreview(props.selectedPhotoId);
     }
   };
 
   onMount(() => {
     document.addEventListener("keydown", handleKeyDown);
-    onCleanup(() => document.removeEventListener("keydown", handleKeyDown));
+    onCleanup(() => {
+      document.removeEventListener("keydown", handleKeyDown);
+      if (renderTimer) clearTimeout(renderTimer);
+    });
   });
 
   return (
     <div class="h-full flex flex-col">
-      <Show
-        when={props.selectedPhotoId}
-        fallback={
-          <div class="h-full flex flex-col items-center justify-center text-[#444]">
-            <div class="text-6xl mb-4">🎛️</div>
-            <div class="text-[#666] font-medium mb-1">Develop Module</div>
-            <div class="text-xs text-[#444] mb-2">Select a photo in Library to edit</div>
-            <div class="text-xs text-[#333]">
-              Sliders are live on the right →
+      {/* Toolbar */}
+      <div class="h-8 bg-[#1c1c1c] border-b border-[#2a2a2a] flex items-center px-3 gap-3 flex-shrink-0">
+        <button
+          onClick={() => {
+            setBeforeAfter((b) => !b);
+            if (props.selectedPhotoId) updatePreview(props.selectedPhotoId);
+          }}
+          class={`text-xs px-2 py-0.5 rounded transition-colors ${
+            beforeAfter()
+              ? "bg-[#3a3a3a] text-white"
+              : "text-[#666] hover:text-[#999]"
+          }`}
+        >
+          {beforeAfter() ? "◀ Before" : "After ▶"} (\)
+        </button>
+        <Show when={rendering()}>
+          <div class="w-3 h-3 border border-[#333] border-t-[#4a9eff] rounded-full animate-spin" />
+        </Show>
+        <Show when={previewDims().w > 0}>
+          <span class="text-xs text-[#444] ml-auto">
+            {previewDims().w} × {previewDims().h}
+          </span>
+        </Show>
+      </div>
+
+      {/* Image area */}
+      <div class="flex-1 overflow-hidden flex items-center justify-center bg-[#0f0f0f]">
+        <Show
+          when={props.selectedPhotoId}
+          fallback={
+            <div class="text-center text-[#333]">
+              <div class="text-5xl mb-3">📷</div>
+              <div class="text-sm">Select a photo in Library</div>
             </div>
-          </div>
-        }
-      >
-        <div class="h-full flex flex-col items-center justify-center bg-[#0a0a0a] relative">
-          {/* Before/After Toggle Indicator */}
-          <Show when={beforeAfterMode()}>
-            <div class="absolute top-4 left-4 px-3 py-1 bg-black/80 text-xs text-[#4a9eff] rounded font-mono">
-              BEFORE
-            </div>
+          }
+        >
+          <Show
+            when={previewUri()}
+            fallback={
+              <div class="flex flex-col items-center gap-3 text-[#444]">
+                <div class="w-8 h-8 border-2 border-[#333] border-t-[#4a9eff] rounded-full animate-spin" />
+                <span class="text-xs">Loading preview...</span>
+              </div>
+            }
+          >
+            {(uri) => (
+              <img
+                src={uri()}
+                class="max-w-full max-h-full object-contain"
+                style={{
+                  opacity: rendering() ? "0.7" : "1",
+                  transition: "opacity 0.1s",
+                }}
+              />
+            )}
           </Show>
-
-          {/* Photo Preview Placeholder */}
-          <div class="text-6xl mb-4">📷</div>
-          <div class="text-[#666] font-medium mb-1">Photo ID: {props.selectedPhotoId.slice(0, 8)}...</div>
-          <div class="text-xs text-[#444] mb-2">Image preview coming in Phase 2</div>
-          <div class="text-xs text-[#333] flex items-center gap-2">
-            <span>Press <kbd class="px-1.5 py-0.5 bg-[#1a1a1a] border border-[#333] rounded text-[10px] font-mono">\</kbd> for Before/After</span>
-          </div>
-
-          {/* Status */}
-          <div class="absolute bottom-4 right-4 text-xs text-[#444]">
-            Mode: {beforeAfterMode() ? "Before" : "After"}
-          </div>
-        </div>
-      </Show>
+        </Show>
+      </div>
     </div>
   );
 }
