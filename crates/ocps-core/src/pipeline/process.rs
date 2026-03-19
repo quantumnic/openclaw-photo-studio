@@ -1,7 +1,7 @@
 //! Core image processing functions (CPU implementation)
 
-use super::color::{calculate_wb_multipliers, hsv_to_rgb, rgb_to_hsv};
-use super::types::{CropSettings, RgbImage16};
+use super::color::{calculate_wb_multipliers, hsv_to_rgb, rgb_to_hsv, rgb_to_hsl, hsl_to_rgb};
+use super::types::{ColorGrading, CropSettings, HslAdjustments, RgbImage16, ToneCurve};
 
 /// Apply exposure adjustment (multiply by 2^ev)
 pub fn apply_exposure(data: &mut [u16], ev: f32) {
@@ -313,6 +313,195 @@ pub fn apply_crop(image: &RgbImage16, crop: &CropSettings) -> RgbImage16 {
     result
 }
 
+/// Apply tone curve using lookup table (LUT)
+/// Builds a 65536-entry LUT via linear interpolation between curve points
+pub fn apply_tone_curve(data: &mut [u16], curve: &ToneCurve) {
+    if curve.points.len() < 2 {
+        return;
+    }
+
+    // Build LUT
+    let mut lut = [0u16; 65536];
+
+    for input in 0..=65535 {
+        let input_norm = (input as f32) / 65535.0;
+
+        // Find the two curve points to interpolate between
+        let mut found = false;
+        for i in 0..curve.points.len() - 1 {
+            let p0 = &curve.points[i];
+            let p1 = &curve.points[i + 1];
+
+            if input_norm >= p0.x && input_norm <= p1.x {
+                // Linear interpolation
+                let t = if p1.x > p0.x {
+                    (input_norm - p0.x) / (p1.x - p0.x)
+                } else {
+                    0.0
+                };
+
+                let output_norm = p0.y + t * (p1.y - p0.y);
+                lut[input as usize] = (output_norm.clamp(0.0, 1.0) * 65535.0) as u16;
+                found = true;
+                break;
+            }
+        }
+
+        if !found {
+            // Extrapolate if outside curve range
+            if input_norm < curve.points[0].x {
+                lut[input as usize] = (curve.points[0].y.clamp(0.0, 1.0) * 65535.0) as u16;
+            } else {
+                let last = curve.points.len() - 1;
+                lut[input as usize] = (curve.points[last].y.clamp(0.0, 1.0) * 65535.0) as u16;
+            }
+        }
+    }
+
+    // Apply LUT to each pixel value
+    for pixel in data.iter_mut() {
+        *pixel = lut[*pixel as usize];
+    }
+}
+
+/// Apply HSL adjustments per color channel
+/// 8 channels by hue angle: Red, Orange, Yellow, Green, Aqua, Blue, Purple, Magenta
+pub fn apply_hsl(data: &mut [u16], _width: u32, _height: u32, hsl: &HslAdjustments) {
+    // Check if any adjustments are non-zero
+    let has_adjustments = hsl.hue.iter().any(|&h| h != 0)
+        || hsl.saturation.iter().any(|&s| s != 0)
+        || hsl.luminance.iter().any(|&l| l != 0);
+
+    if !has_adjustments {
+        return;
+    }
+
+    for chunk in data.chunks_exact_mut(3) {
+        // Normalize to 0.0-1.0
+        let r = (chunk[0] as f32) / 65535.0;
+        let g = (chunk[1] as f32) / 65535.0;
+        let b = (chunk[2] as f32) / 65535.0;
+
+        // Convert to HSL
+        let (h, s, l) = rgb_to_hsl(r, g, b);
+
+        // Determine channel based on hue angle (in degrees)
+        // Red: 315-15, Orange: 15-45, Yellow: 45-75, Green: 75-165,
+        // Aqua: 165-195, Blue: 195-255, Purple: 255-285, Magenta: 285-315
+        let hue_deg = h * 360.0;
+        let channel = if !(15.0..315.0).contains(&hue_deg) {
+            0 // Red
+        } else if hue_deg < 45.0 {
+            1 // Orange
+        } else if hue_deg < 75.0 {
+            2 // Yellow
+        } else if hue_deg < 165.0 {
+            3 // Green
+        } else if hue_deg < 195.0 {
+            4 // Aqua
+        } else if hue_deg < 255.0 {
+            5 // Blue
+        } else if hue_deg < 285.0 {
+            6 // Purple
+        } else {
+            7 // Magenta
+        };
+
+        // Apply adjustments
+        let mut new_h = h * 360.0 + (hsl.hue[channel] as f32);
+        new_h = new_h.rem_euclid(360.0); // Wrap around
+
+        let sat_adjust = 1.0 + (hsl.saturation[channel] as f32) / 100.0;
+        let mut new_s = s * sat_adjust;
+        new_s = new_s.clamp(0.0, 1.0);
+
+        let lum_adjust = (hsl.luminance[channel] as f32) / 100.0;
+        let mut new_l = l + lum_adjust;
+        new_l = new_l.clamp(0.0, 1.0);
+
+        // Convert back to RGB
+        let (r2, g2, b2) = hsl_to_rgb(new_h / 360.0, new_s, new_l);
+
+        chunk[0] = (r2 * 65535.0).round() as u16;
+        chunk[1] = (g2 * 65535.0).round() as u16;
+        chunk[2] = (b2 * 65535.0).round() as u16;
+    }
+}
+
+/// Apply color grading (3-way color wheels: shadows, midtones, highlights)
+pub fn apply_color_grading(data: &mut [u16], _width: u32, _height: u32, cg: &ColorGrading) {
+    // Check if any adjustments are non-zero
+    if cg.shadows_sat == 0 && cg.midtones_sat == 0 && cg.highlights_sat == 0 {
+        return;
+    }
+
+    for chunk in data.chunks_exact_mut(3) {
+        // Normalize to 0.0-1.0
+        let r = (chunk[0] as f32) / 65535.0;
+        let g = (chunk[1] as f32) / 65535.0;
+        let b = (chunk[2] as f32) / 65535.0;
+
+        // Calculate luminance
+        let lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+
+        // Determine zone and blend weights
+        let (shadow_weight, midtone_weight, highlight_weight) = if lum < 0.33 {
+            // Shadows zone
+            let t = lum / 0.33;
+            (1.0 - t, t, 0.0)
+        } else if lum < 0.66 {
+            // Midtones zone
+            let t = (lum - 0.33) / 0.33;
+            (0.0, 1.0 - t, t)
+        } else {
+            // Highlights zone
+            let _t = (lum - 0.66) / 0.34;
+            (0.0, 0.0, 1.0)
+        };
+
+        let mut r2 = r;
+        let mut g2 = g;
+        let mut b2 = b;
+
+        // Apply shadows tint
+        if shadow_weight > 0.0 && cg.shadows_sat > 0 {
+            let hue = (cg.shadows_hue as f32) / 360.0;
+            let sat = (cg.shadows_sat as f32) / 100.0;
+            let (tr, tg, tb) = hsl_to_rgb(hue, sat, 0.5);
+
+            r2 += (tr - 0.5) * shadow_weight * sat;
+            g2 += (tg - 0.5) * shadow_weight * sat;
+            b2 += (tb - 0.5) * shadow_weight * sat;
+        }
+
+        // Apply midtones tint
+        if midtone_weight > 0.0 && cg.midtones_sat > 0 {
+            let hue = (cg.midtones_hue as f32) / 360.0;
+            let sat = (cg.midtones_sat as f32) / 100.0;
+            let (tr, tg, tb) = hsl_to_rgb(hue, sat, 0.5);
+
+            r2 += (tr - 0.5) * midtone_weight * sat;
+            g2 += (tg - 0.5) * midtone_weight * sat;
+            b2 += (tb - 0.5) * midtone_weight * sat;
+        }
+
+        // Apply highlights tint
+        if highlight_weight > 0.0 && cg.highlights_sat > 0 {
+            let hue = (cg.highlights_hue as f32) / 360.0;
+            let sat = (cg.highlights_sat as f32) / 100.0;
+            let (tr, tg, tb) = hsl_to_rgb(hue, sat, 0.5);
+
+            r2 += (tr - 0.5) * highlight_weight * sat;
+            g2 += (tg - 0.5) * highlight_weight * sat;
+            b2 += (tb - 0.5) * highlight_weight * sat;
+        }
+
+        chunk[0] = (r2.clamp(0.0, 1.0) * 65535.0) as u16;
+        chunk[1] = (g2.clamp(0.0, 1.0) * 65535.0) as u16;
+        chunk[2] = (b2.clamp(0.0, 1.0) * 65535.0) as u16;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -530,5 +719,70 @@ mod tests {
         let pixel = result.get_pixel(0, 0);
         assert_eq!(pixel[0], 50); // Should be from x=50 in original
         assert_eq!(pixel[1], 50); // Should be from y=50 in original
+    }
+
+    #[test]
+    fn test_tone_curve_identity() {
+        let mut data = vec![0, 10000, 32768, 50000, 65535];
+        let original = data.clone();
+        let curve = ToneCurve::default(); // Linear curve
+        apply_tone_curve(&mut data, &curve);
+
+        // Should be unchanged (within rounding tolerance)
+        for (a, b) in data.iter().zip(original.iter()) {
+            assert!((*a as i32 - *b as i32).abs() < 2);
+        }
+    }
+
+    #[test]
+    fn test_tone_curve_lut_boundaries() {
+        let curve = ToneCurve::default();
+        let mut data = vec![0u16, 65535];
+        apply_tone_curve(&mut data, &curve);
+
+        // LUT boundaries should be correct
+        assert_eq!(data[0], 0);
+        assert_eq!(data[1], 65535);
+    }
+
+    #[test]
+    fn test_hsl_zero_is_identity() {
+        let mut data = vec![30000, 20000, 10000, 50000, 40000, 30000];
+        let original = data.clone();
+        let hsl = HslAdjustments::default();
+        apply_hsl(&mut data, 2, 1, &hsl);
+
+        // Should be very close (may have small rounding errors from HSL conversion)
+        for (a, b) in data.iter().zip(original.iter()) {
+            assert!((*a as i32 - *b as i32).abs() < 100);
+        }
+    }
+
+    #[test]
+    fn test_hsl_saturation_minus100() {
+        let mut data = vec![50000, 30000, 10000]; // Colorful pixel
+        let mut hsl = HslAdjustments::default();
+
+        // Set all channels to -100 saturation
+        for i in 0..8 {
+            hsl.saturation[i] = -100;
+        }
+
+        apply_hsl(&mut data, 1, 1, &hsl);
+
+        // Should converge toward gray (all channels similar)
+        let range = data[0] as i32 - data[2] as i32;
+        assert!(range.abs() < 5000, "Range too large: {}", range);
+    }
+
+    #[test]
+    fn test_color_grading_zero_is_identity() {
+        let mut data = vec![30000, 20000, 10000, 50000, 40000, 30000];
+        let original = data.clone();
+        let cg = ColorGrading::default();
+        apply_color_grading(&mut data, 2, 1, &cg);
+
+        // Should be unchanged since all saturations are 0
+        assert_eq!(data, original);
     }
 }

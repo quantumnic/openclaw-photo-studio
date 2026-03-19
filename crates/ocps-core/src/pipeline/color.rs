@@ -89,6 +89,81 @@ pub fn hsv_to_rgb(h: f32, s: f32, v: f32) -> (f32, f32, f32) {
     (r + m, g + m, b + m)
 }
 
+/// Convert RGB to HSL
+/// r, g, b in range [0.0, 1.0]
+/// Returns (h, s, l) where h is in [0.0, 1.0], s and l in [0.0, 1.0]
+pub fn rgb_to_hsl(r: f32, g: f32, b: f32) -> (f32, f32, f32) {
+    let max = r.max(g).max(b);
+    let min = r.min(g).min(b);
+    let delta = max - min;
+
+    let l = (max + min) / 2.0;
+
+    if delta < 1e-6 {
+        return (0.0, 0.0, l);
+    }
+
+    let s = if l < 0.5 {
+        delta / (max + min)
+    } else {
+        delta / (2.0 - max - min)
+    };
+
+    let h = if (r - max).abs() < 1e-6 {
+        // Red is max
+        ((g - b) / delta + if g < b { 6.0 } else { 0.0 }) / 6.0
+    } else if (g - max).abs() < 1e-6 {
+        // Green is max
+        ((b - r) / delta + 2.0) / 6.0
+    } else {
+        // Blue is max
+        ((r - g) / delta + 4.0) / 6.0
+    };
+
+    (h, s, l)
+}
+
+/// Convert HSL to RGB
+/// h in [0.0, 1.0], s and l in [0.0, 1.0]
+/// Returns (r, g, b) in [0.0, 1.0]
+pub fn hsl_to_rgb(h: f32, s: f32, l: f32) -> (f32, f32, f32) {
+    if s < 1e-6 {
+        return (l, l, l);
+    }
+
+    let q = if l < 0.5 {
+        l * (1.0 + s)
+    } else {
+        l + s - l * s
+    };
+
+    let p = 2.0 * l - q;
+
+    let hue_to_rgb = |p: f32, q: f32, mut t: f32| -> f32 {
+        if t < 0.0 {
+            t += 1.0;
+        }
+        if t > 1.0 {
+            t -= 1.0;
+        }
+        if t < 1.0 / 6.0 {
+            p + (q - p) * 6.0 * t
+        } else if t < 1.0 / 2.0 {
+            q
+        } else if t < 2.0 / 3.0 {
+            p + (q - p) * (2.0 / 3.0 - t) * 6.0
+        } else {
+            p
+        }
+    };
+
+    let r = hue_to_rgb(p, q, h + 1.0 / 3.0);
+    let g = hue_to_rgb(p, q, h);
+    let b = hue_to_rgb(p, q, h - 1.0 / 3.0);
+
+    (r, g, b)
+}
+
 /// Calculate white balance multipliers from temperature and tint
 /// Returns [r_mult, g_mult, b_mult]
 pub fn calculate_wb_multipliers(temperature: u32, tint: i32) -> [f32; 3] {

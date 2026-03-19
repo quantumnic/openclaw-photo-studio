@@ -156,18 +156,79 @@ impl CropSettings {
     }
 }
 
+/// Point on a tone curve
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct CurvePoint {
+    pub x: f32, // 0.0-1.0
+    pub y: f32, // 0.0-1.0
+}
+
+/// Tone curve (maps input luminance to output luminance)
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ToneCurve {
+    pub points: Vec<CurvePoint>,
+}
+
+impl Default for ToneCurve {
+    fn default() -> Self {
+        // Linear curve by default
+        Self {
+            points: vec![
+                CurvePoint { x: 0.0, y: 0.0 },
+                CurvePoint { x: 1.0, y: 1.0 },
+            ],
+        }
+    }
+}
+
+/// HSL adjustments per color channel (8 channels)
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct HslAdjustments {
+    pub hue: [i32; 8],        // -180 to +180 per channel
+    pub saturation: [i32; 8], // -100 to +100 per channel
+    pub luminance: [i32; 8],  // -100 to +100 per channel
+}
+
 /// Color grading settings (3-way color wheels)
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ColorGrading {
+    pub shadows_hue: u32,    // 0-360
+    pub shadows_sat: u32,    // 0-100
+    pub midtones_hue: u32,   // 0-360
+    pub midtones_sat: u32,   // 0-100
+    pub highlights_hue: u32, // 0-360
+    pub highlights_sat: u32, // 0-100
+    pub blending: u32,       // 0-100
+    pub balance: i32,        // -100 to +100
+}
+
+impl Default for ColorGrading {
+    fn default() -> Self {
+        Self {
+            shadows_hue: 0,
+            shadows_sat: 0,
+            midtones_hue: 0,
+            midtones_sat: 0,
+            highlights_hue: 0,
+            highlights_sat: 0,
+            blending: 50,
+            balance: 0,
+        }
+    }
+}
+
+/// Old color grading settings (kept for compatibility)
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ColorGradingSettings {
-    pub shadows_hue: f32,      // 0.0-360.0
-    pub shadows_sat: f32,      // -100.0 to 100.0
-    pub midtones_hue: f32,     // 0.0-360.0
-    pub midtones_sat: f32,     // -100.0 to 100.0
-    pub highlights_hue: f32,   // 0.0-360.0
-    pub highlights_sat: f32,   // -100.0 to 100.0
-    pub global_hue: f32,       // 0.0-360.0
-    pub global_sat: f32,       // -100.0 to 100.0
-    pub blending: f32,         // 0.0-100.0
+    pub shadows_hue: f32,    // 0.0-360.0
+    pub shadows_sat: f32,    // -100.0 to 100.0
+    pub midtones_hue: f32,   // 0.0-360.0
+    pub midtones_sat: f32,   // -100.0 to 100.0
+    pub highlights_hue: f32, // 0.0-360.0
+    pub highlights_sat: f32, // -100.0 to 100.0
+    pub global_hue: f32,     // 0.0-360.0
+    pub global_sat: f32,     // -100.0 to 100.0
+    pub blending: f32,       // 0.0-100.0
 }
 
 impl Default for ColorGradingSettings {
@@ -204,6 +265,9 @@ pub struct EditRecipe {
     pub noise_reduction: NoiseReductionSettings,
     pub crop: CropSettings,
     pub color_grading: ColorGradingSettings,
+    pub tone_curve_rgb: ToneCurve,
+    pub hsl: HslAdjustments,
+    pub color_grading_new: ColorGrading,
 }
 
 impl EditRecipe {

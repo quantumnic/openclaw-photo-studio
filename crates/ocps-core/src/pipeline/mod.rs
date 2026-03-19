@@ -7,14 +7,15 @@ pub mod process;
 pub mod types;
 
 pub use types::{
-    ColorGradingSettings, CropSettings, EditRecipe, NoiseReductionSettings, RgbImage16,
-    RgbImage8, SharpeningSettings, WhiteBalance,
+    ColorGrading, ColorGradingSettings, CropSettings, CurvePoint, EditRecipe, HslAdjustments,
+    NoiseReductionSettings, RgbImage16, RgbImage8, SharpeningSettings, ToneCurve, WhiteBalance,
 };
 
 use color::u16_linear_to_u8_srgb;
 use process::{
-    apply_clarity, apply_contrast, apply_crop, apply_exposure, apply_highlights_shadows,
-    apply_saturation, apply_sharpening, apply_white_balance,
+    apply_clarity, apply_color_grading, apply_contrast, apply_crop, apply_exposure,
+    apply_highlights_shadows, apply_hsl, apply_saturation, apply_sharpening, apply_tone_curve,
+    apply_white_balance,
 };
 
 /// Main image processor - applies full editing pipeline
@@ -54,6 +55,9 @@ impl ImageProcessor {
             recipe.blacks,
         );
 
+        // Step 4.5: Tone curve (after basic tone adjustments)
+        apply_tone_curve(&mut working.data, &recipe.tone_curve_rgb);
+
         // Step 5: Clarity (local contrast - must be done before saturation)
         if recipe.clarity != 0 {
             apply_clarity(&mut working, recipe.clarity);
@@ -61,6 +65,22 @@ impl ImageProcessor {
 
         // Step 6: Vibrance/Saturation (color adjustments)
         apply_saturation(&mut working.data, recipe.saturation, recipe.vibrance);
+
+        // Step 6.5: HSL adjustments (per-channel color adjustments)
+        apply_hsl(
+            &mut working.data,
+            working.width,
+            working.height,
+            &recipe.hsl,
+        );
+
+        // Step 6.6: Color grading (3-way color wheels)
+        apply_color_grading(
+            &mut working.data,
+            working.width,
+            working.height,
+            &recipe.color_grading_new,
+        );
 
         // Step 7: Sharpening (should be near the end)
         if recipe.sharpening.amount > 0 {
