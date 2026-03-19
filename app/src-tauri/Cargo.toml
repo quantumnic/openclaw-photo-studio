@@ -29,6 +29,7 @@ dirs = "5"
 uuid = { workspace = true }
 base64 = "0.22"
 chrono = { workspace = true }
+rayon = "1"
 
 [profile.release]
 opt-level = 3

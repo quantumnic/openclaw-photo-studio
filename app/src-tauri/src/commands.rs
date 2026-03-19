@@ -1531,3 +1531,233 @@ pub fn check_tethered_camera() -> Result<serde_json::Value, String> {
         "message": "Tethering coming in Phase 7"
     }))
 }
+
+// ========== PART A: Render Commands ==========
+
+/// Render a preview image with applied edits
+///
+/// # Arguments
+/// * `photo_id` - Photo ID from catalog
+/// * `recipe` - Optional edit recipe (None = use saved recipe from catalog)
+/// * `max_width` - Maximum width for preview
+/// * `max_height` - Maximum height for preview
+///
+/// # Returns
+/// * `Ok(Value)` - JSON with { data_uri, width, height, duration_ms }
+/// * `Err(String)` - Error message
+#[tauri::command]
+pub async fn render_preview(
+    state: tauri::State<'_, AppState>,
+    photo_id: String,
+    recipe: Option<serde_json::Value>,
+    max_width: u32,
+    max_height: u32,
+) -> Result<serde_json::Value, String> {
+    // Load photo path and recipe from catalog (drop lock before await)
+    let (photo_path, edit_recipe) = {
+        let catalog_lock = state.catalog.lock().unwrap();
+        let catalog = catalog_lock
+            .as_ref()
+            .ok_or("No catalog open".to_string())?;
+
+        let photo = catalog
+            .get_photo(&photo_id)
+            .map_err(|e| format!("Failed to get photo: {}", e))?
+            .ok_or("Photo not found".to_string())?;
+
+        let photo_path = photo.file_path.clone();
+
+        // Load or use provided recipe
+        let edit_recipe: ocps_core::EditRecipe = if let Some(recipe_value) = recipe {
+            serde_json::from_value(recipe_value)
+                .map_err(|e| format!("Failed to parse recipe: {}", e))?
+        } else {
+            // Load from catalog
+            let recipe_json = catalog
+                .load_edit(&photo_id)
+                .map_err(|e| format!("Failed to load edit: {}", e))?;
+
+            if let Some(json) = recipe_json {
+                serde_json::from_str(&json).map_err(|e| format!("Failed to parse recipe: {}", e))?
+            } else {
+                ocps_core::EditRecipe::default()
+            }
+        };
+
+        (photo_path, edit_recipe)
+    }; // Lock dropped here
+
+    // Render in background thread
+    let path = std::path::PathBuf::from(photo_path);
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        crate::render::render_photo(&path, &edit_recipe, max_width, max_height)
+    })
+    .await
+    .map_err(|e| format!("Render task failed: {}", e))??;
+
+    Ok(serde_json::json!({
+        "data_uri": result.data_uri,
+        "width": result.width,
+        "height": result.height,
+        "duration_ms": result.duration_ms,
+    }))
+}
+
+/// Render thumbnail for a single photo (256x256 max)
+///
+/// # Arguments
+/// * `photo_id` - Photo ID from catalog
+///
+/// # Returns
+/// * `Ok(String)` - Data URI string
+/// * `Err(String)` - Error message
+#[tauri::command]
+pub async fn render_thumbnail(
+    state: tauri::State<'_, AppState>,
+    photo_id: String,
+) -> Result<String, String> {
+    // Check preview cache first (drop lock immediately)
+    {
+        let mut cache_lock = state.preview_cache.lock().unwrap();
+        if let Some(cached) = cache_lock.get(&photo_id) {
+            return Ok(format!("data:image/jpeg;base64,{}", cached.data_base64));
+        }
+    }
+
+    // Not in cache - render it
+    let result_json = render_preview(state.clone(), photo_id.clone(), None, 256, 256).await?;
+
+    let data_uri = result_json
+        .get("data_uri")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing data_uri in render result")?
+        .to_string();
+
+    // Cache it
+    {
+        let mut cache_lock = state.preview_cache.lock().unwrap();
+        let base64_part = data_uri
+            .strip_prefix("data:image/jpeg;base64,")
+            .unwrap_or(&data_uri);
+        cache_lock.put(
+            &photo_id,
+            ocps_core::preview_cache::CachedPreview {
+                data_base64: base64_part.to_string(),
+                width: result_json.get("width").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
+                height: result_json.get("height").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
+                generated_at: std::time::SystemTime::now(),
+            },
+        );
+    }
+
+    Ok(data_uri)
+}
+
+/// Render thumbnails for multiple photos in parallel
+///
+/// # Arguments
+/// * `photo_ids` - Vector of photo IDs
+///
+/// # Returns
+/// * `Ok(Vec<Value>)` - Array of { photo_id, data_uri } or { photo_id, error }
+/// * `Err(String)` - Error message
+#[tauri::command]
+pub async fn render_thumbnails_batch(
+    state: tauri::State<'_, AppState>,
+    photo_ids: Vec<String>,
+) -> Result<Vec<serde_json::Value>, String> {
+    use rayon::prelude::*;
+
+    // Load photo paths from catalog
+    let catalog_lock = state.catalog.lock().unwrap();
+    let catalog = catalog_lock
+        .as_ref()
+        .ok_or("No catalog open".to_string())?;
+
+    let mut photo_paths: Vec<(String, String)> = Vec::new();
+    for photo_id in &photo_ids {
+        if let Ok(Some(photo)) = catalog.get_photo(photo_id) {
+            photo_paths.push((photo_id.clone(), photo.file_path.clone()));
+        }
+    }
+
+    drop(catalog_lock);
+
+    // Render in parallel (limit to 4 concurrent to avoid OOM)
+    let results: Vec<serde_json::Value> = photo_paths
+        .par_iter()
+        .map(|(photo_id, photo_path)| {
+            let recipe = ocps_core::EditRecipe::default();
+            let path = std::path::Path::new(photo_path);
+
+            match crate::render::render_photo(path, &recipe, 256, 256) {
+                Ok(result) => serde_json::json!({
+                    "photo_id": photo_id,
+                    "data_uri": result.data_uri,
+                }),
+                Err(e) => serde_json::json!({
+                    "photo_id": photo_id,
+                    "error": e,
+                }),
+            }
+        })
+        .collect();
+
+    // Cache successful renders
+    let mut cache_lock = state.preview_cache.lock().unwrap();
+    for result in &results {
+        if let (Some(photo_id), Some(data_uri)) = (
+            result.get("photo_id").and_then(|v| v.as_str()),
+            result.get("data_uri").and_then(|v| v.as_str()),
+        ) {
+            let base64_part = data_uri
+                .strip_prefix("data:image/jpeg;base64,")
+                .unwrap_or(data_uri);
+            cache_lock.put(
+                photo_id,
+                ocps_core::preview_cache::CachedPreview {
+                    data_base64: base64_part.to_string(),
+                    width: 256,
+                    height: 256,
+                    generated_at: std::time::SystemTime::now(),
+                },
+            );
+        }
+    }
+
+    Ok(results)
+}
+
+/// Get a single photo by ID (for loupe view)
+#[tauri::command]
+pub fn get_photo(
+    state: tauri::State<'_, AppState>,
+    photo_id: String,
+) -> Result<serde_json::Value, String> {
+    let catalog_lock = state.catalog.lock().unwrap();
+    let catalog = catalog_lock
+        .as_ref()
+        .ok_or("No catalog open".to_string())?;
+
+    let photo = catalog
+        .get_photo(&photo_id)
+        .map_err(|e| format!("Failed to get photo: {}", e))?
+        .ok_or("Photo not found".to_string())?;
+
+    Ok(serde_json::json!({
+        "id": photo.id,
+        "file_path": photo.file_path,
+        "file_name": photo.file_name,
+        "file_size": photo.file_size,
+        "width": photo.width,
+        "height": photo.height,
+        "date_taken": photo.date_taken,
+        "date_imported": photo.date_imported,
+        "camera_make": photo.camera_make,
+        "camera_model": photo.camera_model,
+        "rating": photo.rating,
+        "color_label": photo.color_label,
+        "flag": photo.flag,
+        "has_edits": photo.has_edits,
+    }))
+}

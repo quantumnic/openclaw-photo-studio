@@ -1,6 +1,7 @@
 use tauri::Manager;
 
 mod commands;
+mod render;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -49,6 +50,10 @@ pub fn run() {
             commands::get_cache_stats,
             commands::render_preview_with_recipe,
             commands::check_tethered_camera,
+            commands::render_preview,
+            commands::render_thumbnail,
+            commands::render_thumbnails_batch,
+            commands::get_photo,
         ])
         .setup(|app| {
             #[cfg(debug_assertions)]
