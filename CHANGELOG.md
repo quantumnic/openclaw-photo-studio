@@ -5,6 +5,37 @@ All notable changes to OpenClaw Photo Studio will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-03-19
+
+### Added
+
+#### Color Management
+- ICC profile embedding in JPEG exports (sRGB, Adobe RGB 1998, Display P3)
+- Color space conversion for Adobe RGB (gamma 2.2)
+- Soft proofing mode to simulate output color spaces
+- Gamut warning overlay for out-of-gamut pixels (magenta highlight)
+
+#### Export Features
+- Text watermark engine with bitmap font rendering
+- Contact sheet generation with customizable grid layouts (2-8 columns, 2-10 rows)
+- Configurable watermark position (9 positions), opacity, color, and size
+- Auto-resize images to fit contact sheet cells with aspect ratio preservation
+
+#### Multi-Catalog Support
+- Open existing catalogs from .ocps files
+- Create new empty catalogs
+- Close catalog command
+- Catalog info API (path, photo count, creation/modification timestamps)
+
+### Changed
+- Catalog now stores its database path for multi-catalog workflows
+- Enhanced get_catalog_info to return detailed metadata
+
+### Technical
+- 261 tests passing (>260 requirement met)
+- All clippy warnings resolved
+- Added 17 new tests for color management, watermark, and contact sheets
+
 ## [0.2.0] - 2026-03-19
 
 ### Added

@@ -1,6 +1,6 @@
 [package]
 name = "ocps-plugin-host"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 description = "OpenClaw Photo Studio — WASM plugin host"
 license = "LicenseRef-PolyForm-Noncommercial-1.0.0"
