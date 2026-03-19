@@ -23,6 +23,7 @@ ocps-core = { path = "../../crates/ocps-core" }
 ocps-catalog = { path = "../../crates/ocps-catalog" }
 ocps-xmp = { path = "../../crates/ocps-xmp" }
 ocps-export = { path = "../../crates/ocps-export" }
+dirs = "5"
 
 [profile.release]
 opt-level = 3
