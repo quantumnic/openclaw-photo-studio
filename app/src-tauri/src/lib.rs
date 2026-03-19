@@ -54,6 +54,8 @@ pub fn run() {
             commands::render_thumbnail,
             commands::render_thumbnails_batch,
             commands::get_photo,
+            commands::get_photo_metadata,
+            commands::auto_white_balance,
         ])
         .setup(|app| {
             #[cfg(debug_assertions)]

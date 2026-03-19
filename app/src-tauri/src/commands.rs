@@ -1761,3 +1761,65 @@ pub fn get_photo(
         "has_edits": photo.has_edits,
     }))
 }
+
+/// Get photo metadata including EXIF data
+#[tauri::command]
+pub fn get_photo_metadata(
+    state: tauri::State<'_, AppState>,
+    photo_id: String,
+) -> Result<serde_json::Value, String> {
+    let catalog_lock = state.catalog.lock().unwrap();
+    let catalog = catalog_lock
+        .as_ref()
+        .ok_or("No catalog open".to_string())?;
+
+    let photo = catalog
+        .get_photo(&photo_id)
+        .map_err(|e| format!("Failed to get photo: {}", e))?
+        .ok_or("Photo not found".to_string())?;
+
+    // Format camera info
+    let camera = match (&photo.camera_make, &photo.camera_model) {
+        (Some(make), Some(model)) => format!("{} {}", make, model),
+        (Some(make), None) => make.clone(),
+        (None, Some(model)) => model.clone(),
+        _ => "Unknown".to_string(),
+    };
+
+    // Format file size
+    let file_size_mb = photo.file_size as f64 / (1024.0 * 1024.0);
+
+    Ok(serde_json::json!({
+        "camera": camera,
+        "lens": "—",  // TODO: Add to catalog schema
+        "iso": "—",   // TODO: Add to catalog schema
+        "aperture": "—",  // TODO: Add to catalog schema
+        "shutter_speed": "—",  // TODO: Add to catalog schema
+        "focal_length": "—",  // TODO: Add to catalog schema
+        "date_taken": photo.date_taken.as_deref().unwrap_or("—"),
+        "dimensions": match (photo.width, photo.height) {
+            (Some(w), Some(h)) => format!("{} × {}", w, h),
+            _ => "—".to_string(),
+        },
+        "file_size": format!("{:.1} MB", file_size_mb),
+        "file_type": std::path::Path::new(&photo.file_path)
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("—")
+            .to_uppercase(),
+    }))
+}
+
+/// Auto white balance - simple implementation
+#[tauri::command]
+pub fn auto_white_balance(
+    _state: tauri::State<'_, AppState>,
+    _photo_id: String,
+) -> Result<serde_json::Value, String> {
+    // For now, return a reasonable default
+    // Full implementation would analyze the image for grey areas
+    Ok(serde_json::json!({
+        "temperature": 5500,
+        "tint": 0,
+    }))
+}

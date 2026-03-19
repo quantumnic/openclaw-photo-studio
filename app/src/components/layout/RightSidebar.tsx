@@ -156,6 +156,7 @@ export function RightSidebar(props: RightSidebarProps) {
   const [dirty, setDirty] = createSignal(false);
   const [hasClipboard, setHasClipboard] = createSignal(false);
   const [saving, setSaving] = createSignal(false);
+  const [metadata, setMetadata] = createSignal<any>(null);
 
   let saveTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -174,6 +175,23 @@ export function RightSidebar(props: RightSidebarProps) {
     } catch (e) {
       console.error("Failed to load recipe:", e);
       setRecipe(defaultRecipe());
+    }
+  });
+
+  // Load metadata when selected photo changes (library module)
+  createEffect(async () => {
+    const id = props.selectedPhotoId;
+    if (!id || props.module !== "library") {
+      setMetadata(null);
+      return;
+    }
+
+    try {
+      const meta = await invoke("get_photo_metadata", { photoId: id });
+      setMetadata(meta);
+    } catch (e) {
+      console.error("Failed to load metadata:", e);
+      setMetadata(null);
     }
   });
 
@@ -448,20 +466,57 @@ export function RightSidebar(props: RightSidebarProps) {
             <div class="text-xs text-[#555] italic">Keyword tagging — Phase 2</div>
           </PanelSection>
           <PanelSection title="Metadata">
-            <div class="space-y-1">
-              {[
-                ["Camera", "—"],
-                ["Lens", "—"],
-                ["ISO", "—"],
-                ["f/", "—"],
-                ["Shutter", "—"],
-              ].map(([k, v]) => (
-                <div class="flex justify-between text-xs">
-                  <span class="text-[#666]">{k}</span>
-                  <span class="text-[#888]">{v}</span>
+            <Show
+              when={metadata()}
+              fallback={
+                <div class="text-xs text-[#555] italic">Select a photo to view metadata</div>
+              }
+            >
+              {(meta) => (
+                <div class="space-y-1">
+                  <div class="flex justify-between text-xs">
+                    <span class="text-[#666]">Camera</span>
+                    <span class="text-[#888]">{meta().camera}</span>
+                  </div>
+                  <div class="flex justify-between text-xs">
+                    <span class="text-[#666]">Lens</span>
+                    <span class="text-[#888]">{meta().lens}</span>
+                  </div>
+                  <div class="flex justify-between text-xs">
+                    <span class="text-[#666]">ISO</span>
+                    <span class="text-[#888]">{meta().iso}</span>
+                  </div>
+                  <div class="flex justify-between text-xs">
+                    <span class="text-[#666]">Aperture</span>
+                    <span class="text-[#888]">{meta().aperture}</span>
+                  </div>
+                  <div class="flex justify-between text-xs">
+                    <span class="text-[#666]">Shutter</span>
+                    <span class="text-[#888]">{meta().shutter_speed}</span>
+                  </div>
+                  <div class="flex justify-between text-xs">
+                    <span class="text-[#666]">Focal</span>
+                    <span class="text-[#888]">{meta().focal_length}</span>
+                  </div>
+                  <div class="flex justify-between text-xs">
+                    <span class="text-[#666]">Date</span>
+                    <span class="text-[#888]">{meta().date_taken}</span>
+                  </div>
+                  <div class="flex justify-between text-xs">
+                    <span class="text-[#666]">Dimensions</span>
+                    <span class="text-[#888]">{meta().dimensions}</span>
+                  </div>
+                  <div class="flex justify-between text-xs">
+                    <span class="text-[#666]">Size</span>
+                    <span class="text-[#888]">{meta().file_size}</span>
+                  </div>
+                  <div class="flex justify-between text-xs">
+                    <span class="text-[#666]">Type</span>
+                    <span class="text-[#888]">{meta().file_type}</span>
+                  </div>
                 </div>
-              ))}
-            </div>
+              )}
+            </Show>
           </PanelSection>
         </>
       )}
