@@ -6,13 +6,20 @@ type Module = "library" | "develop" | "map" | "print";
 
 interface MainViewProps {
   module: Module;
+  selectedPhotoId: string | null;
+  onSelectPhoto: (id: string | null) => void;
 }
 
 export function MainView(props: MainViewProps) {
   return (
     <main class="flex-1 overflow-hidden bg-[#141414] relative">
-      {props.module === "library" && <LibraryView />}
-      {props.module === "develop" && <DevelopView />}
+      {props.module === "library" && (
+        <LibraryView
+          selectedPhotoId={props.selectedPhotoId}
+          onSelectPhoto={props.onSelectPhoto}
+        />
+      )}
+      {props.module === "develop" && <DevelopView selectedPhotoId={props.selectedPhotoId} />}
       {props.module === "map" && <PlaceholderView label="Map" emoji="🗺️" phase="Phase 5" />}
       {props.module === "print" && <PlaceholderView label="Print / Contact Sheet" emoji="🖨️" phase="Phase 7" />}
     </main>
@@ -43,11 +50,15 @@ interface CatalogStats {
   rejects: number;
 }
 
-function LibraryView() {
+interface LibraryViewProps {
+  selectedPhotoId: string | null;
+  onSelectPhoto: (id: string | null) => void;
+}
+
+function LibraryView(props: LibraryViewProps) {
   const [photos, setPhotos] = createSignal<Photo[]>([]);
   const [loading, setLoading] = createSignal(false);
   const [stats, setStats] = createSignal<CatalogStats | null>(null);
-  const [selectedId, setSelectedId] = createSignal<string | null>(null);
   const [thumbnailSize, setThumbnailSize] = createSignal(160);
   const [importResult, setImportResult] = createSignal<any>(null);
   const [error, setError] = createSignal<string | null>(null);
@@ -107,7 +118,7 @@ function LibraryView() {
 
   // Keyboard shortcuts
   const handleKeyDown = async (e: KeyboardEvent) => {
-    const selected = selectedId();
+    const selected = props.selectedPhotoId;
     if (!selected) return;
 
     // Rating: 0-5
@@ -196,7 +207,7 @@ function LibraryView() {
       const newIndex =
         e.key === "ArrowRight" ? currentIndex + 1 : currentIndex - 1;
       if (newIndex >= 0 && newIndex < photos().length) {
-        setSelectedId(photos()[newIndex].id);
+        props.onSelectPhoto(photos()[newIndex].id);
       }
     }
   };
@@ -297,9 +308,9 @@ function LibraryView() {
             <For each={photos()}>
               {(photo) => (
                 <div
-                  onClick={() => setSelectedId(photo.id)}
+                  onClick={() => props.onSelectPhoto(photo.id)}
                   class={`relative bg-[#1a1a1a] rounded overflow-hidden cursor-pointer group hover:ring-1 hover:ring-[#4a9eff] transition-all aspect-[3/2] ${
-                    selectedId() === photo.id
+                    props.selectedPhotoId === photo.id
                       ? "ring-2 ring-[#4a9eff]"
                       : ""
                   }`}
@@ -373,15 +384,65 @@ function LibraryView() {
   );
 }
 
-function DevelopView() {
+interface DevelopViewProps {
+  selectedPhotoId: string | null;
+}
+
+function DevelopView(props: DevelopViewProps) {
+  const [beforeAfterMode, setBeforeAfterMode] = createSignal(false);
+
+  // Keyboard shortcut for before/after
+  const handleKeyDown = (e: KeyboardEvent) => {
+    if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+
+    if (e.key === "\\" && props.selectedPhotoId) {
+      e.preventDefault();
+      setBeforeAfterMode((m) => !m);
+    }
+  };
+
+  onMount(() => {
+    document.addEventListener("keydown", handleKeyDown);
+    onCleanup(() => document.removeEventListener("keydown", handleKeyDown));
+  });
+
   return (
-    <div class="h-full flex flex-col items-center justify-center text-[#444]">
-      <div class="text-6xl mb-4">🎛️</div>
-      <div class="text-[#666] font-medium mb-1">Develop Module</div>
-      <div class="text-xs text-[#444] mb-2">GPU-accelerated RAW development</div>
-      <div class="text-xs text-[#333]">
-        Full pipeline coming in Phase 3 — Sliders are live on the right →
-      </div>
+    <div class="h-full flex flex-col">
+      <Show
+        when={props.selectedPhotoId}
+        fallback={
+          <div class="h-full flex flex-col items-center justify-center text-[#444]">
+            <div class="text-6xl mb-4">🎛️</div>
+            <div class="text-[#666] font-medium mb-1">Develop Module</div>
+            <div class="text-xs text-[#444] mb-2">Select a photo in Library to edit</div>
+            <div class="text-xs text-[#333]">
+              Sliders are live on the right →
+            </div>
+          </div>
+        }
+      >
+        <div class="h-full flex flex-col items-center justify-center bg-[#0a0a0a] relative">
+          {/* Before/After Toggle Indicator */}
+          <Show when={beforeAfterMode()}>
+            <div class="absolute top-4 left-4 px-3 py-1 bg-black/80 text-xs text-[#4a9eff] rounded font-mono">
+              BEFORE
+            </div>
+          </Show>
+
+          {/* Photo Preview Placeholder */}
+          <div class="text-6xl mb-4">📷</div>
+          <div class="text-[#666] font-medium mb-1">Photo ID: {props.selectedPhotoId.slice(0, 8)}...</div>
+          <div class="text-xs text-[#444] mb-2">Image preview coming in Phase 2</div>
+          <div class="text-xs text-[#333] flex items-center gap-2">
+            <span>Press <kbd class="px-1.5 py-0.5 bg-[#1a1a1a] border border-[#333] rounded text-[10px] font-mono">\</kbd> for Before/After</span>
+          </div>
+
+          {/* Status */}
+          <div class="absolute bottom-4 right-4 text-xs text-[#444]">
+            Mode: {beforeAfterMode() ? "Before" : "After"}
+          </div>
+        </div>
+      </Show>
     </div>
   );
 }
