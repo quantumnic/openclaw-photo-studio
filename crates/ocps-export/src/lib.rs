@@ -4,6 +4,9 @@
 pub mod jpeg;
 pub mod png;
 pub mod resize;
+pub mod dng;
+
+pub use dng::export_dng;
 
 pub fn version() -> &'static str {
     env!("CARGO_PKG_VERSION")
