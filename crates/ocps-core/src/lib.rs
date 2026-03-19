@@ -10,7 +10,7 @@ pub fn version() -> &'static str {
 pub mod raw;
 
 pub use raw::{
-    decode, CfaPattern, RawDecodeError, RawImage,
+    decode, decode_meta, CfaPattern, RawDecodeError, RawImage, RawImageMeta,
     demosaic::{demosaic, DemosaicAlgorithm, RgbImage},
     thumbnail::{extract_thumbnail, quick_thumbnail, ThumbnailError},
 };
