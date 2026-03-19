@@ -354,6 +354,26 @@ pub struct HealingSpot {
     pub opacity: f32,      // blend opacity 0-1
 }
 
+/// Soft proofing settings for simulating output color spaces
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SoftProofSettings {
+    pub enabled: bool,
+    pub profile: String,           // "sRGB", "AdobeRGB", "DisplayP3"
+    pub rendering_intent: String,  // "perceptual", "relative"
+    pub show_gamut_warning: bool,  // highlight out-of-gamut pixels
+}
+
+impl Default for SoftProofSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            profile: "sRGB".to_string(),
+            rendering_intent: "relative".to_string(),
+            show_gamut_warning: false,
+        }
+    }
+}
+
 /// Complete edit recipe for an image
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
 pub struct EditRecipe {
@@ -378,6 +398,7 @@ pub struct EditRecipe {
     pub lens_corrections: LensCorrections,
     pub local_adjustments: Vec<LocalAdjustment>,
     pub healing_spots: Vec<HealingSpot>,
+    pub soft_proof: SoftProofSettings,
 }
 
 impl EditRecipe {
