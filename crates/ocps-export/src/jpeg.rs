@@ -1,10 +1,11 @@
 //! JPEG export functionality
 
 use crate::ExportError;
+use crate::color::{OutputColorSpace, embed_icc_profile};
 use image::RgbImage;
 use std::path::Path;
 
-/// Export RGB image data as JPEG
+/// Export RGB image data as JPEG with ICC profile
 ///
 /// # Arguments
 /// * `rgb_data` - 8-bit sRGB data, RGB interleaved
@@ -12,12 +13,33 @@ use std::path::Path;
 /// * `height` - Image height in pixels
 /// * `quality` - JPEG quality 1-100 (higher is better)
 /// * `output_path` - Path to save the JPEG file
+/// * `color_space` - Optional color space (defaults to sRGB)
 pub fn export_jpeg(
     rgb_data: &[u8],
     width: u32,
     height: u32,
     quality: u32,
     output_path: &Path,
+) -> Result<(), ExportError> {
+    export_jpeg_with_profile(rgb_data, width, height, quality, output_path, &OutputColorSpace::SRGB)
+}
+
+/// Export RGB image data as JPEG with specific color space
+///
+/// # Arguments
+/// * `rgb_data` - 8-bit RGB data
+/// * `width` - Image width in pixels
+/// * `height` - Image height in pixels
+/// * `quality` - JPEG quality 1-100 (higher is better)
+/// * `output_path` - Path to save the JPEG file
+/// * `color_space` - Color space and ICC profile to embed
+pub fn export_jpeg_with_profile(
+    rgb_data: &[u8],
+    width: u32,
+    height: u32,
+    quality: u32,
+    output_path: &Path,
+    color_space: &OutputColorSpace,
 ) -> Result<(), ExportError> {
     // Validate input
     let expected_size = (width * height * 3) as usize;
@@ -43,18 +65,24 @@ pub fn export_jpeg(
         ))
     })?;
 
-    // Create a JPEG encoder with quality setting
-    let mut output = std::fs::File::create(output_path)?;
-    let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut output, quality as u8);
+    // Encode to memory first so we can embed ICC profile
+    let mut jpeg_buffer = Vec::new();
+    {
+        let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg_buffer, quality as u8);
+        encoder
+            .encode(img.as_raw(), width, height, image::ExtendedColorType::Rgb8)
+            .map_err(|e| {
+                ExportError::Io(std::io::Error::other(
+                    format!("JPEG encoding failed: {}", e),
+                ))
+            })?;
+    }
 
-    // Encode and write
-    encoder
-        .encode(img.as_raw(), width, height, image::ExtendedColorType::Rgb8)
-        .map_err(|e| {
-            ExportError::Io(std::io::Error::other(
-                format!("JPEG encoding failed: {}", e),
-            ))
-        })?;
+    // Embed ICC profile
+    let jpeg_with_profile = embed_icc_profile(&jpeg_buffer, color_space);
+
+    // Write to file
+    std::fs::write(output_path, jpeg_with_profile)?;
 
     Ok(())
 }
@@ -120,5 +148,69 @@ mod tests {
         let result = export_jpeg(&rgb_data, width, height, 90, temp_file.path());
 
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_export_jpeg_embeds_icc_profile() {
+        use crate::color::OutputColorSpace;
+
+        let width = 4;
+        let height = 4;
+        let rgb_data = vec![128u8; (width * height * 3) as usize];
+
+        let temp_file = NamedTempFile::new().unwrap();
+        let result = export_jpeg_with_profile(
+            &rgb_data,
+            width,
+            height,
+            90,
+            temp_file.path(),
+            &OutputColorSpace::SRGB,
+        );
+
+        assert!(result.is_ok());
+
+        // Read back and verify ICC profile is present
+        let jpeg_data = std::fs::read(temp_file.path()).unwrap();
+
+        // Should start with JPEG SOI marker
+        assert_eq!(jpeg_data[0], 0xFF);
+        assert_eq!(jpeg_data[1], 0xD8);
+
+        // Should contain APP2 marker (0xFF 0xE2)
+        let has_app2 = jpeg_data.windows(2)
+            .any(|w| w[0] == 0xFF && w[1] == 0xE2);
+        assert!(has_app2, "JPEG should contain APP2 marker for ICC profile");
+
+        // Should contain ICC_PROFILE identifier
+        let icc_marker = b"ICC_PROFILE\0";
+        let has_icc = jpeg_data.windows(icc_marker.len())
+            .any(|w| w == icc_marker);
+        assert!(has_icc, "JPEG should contain ICC_PROFILE marker");
+    }
+
+    #[test]
+    fn test_export_jpeg_adobe_rgb() {
+        use crate::color::OutputColorSpace;
+
+        let width = 2;
+        let height = 2;
+        let rgb_data = vec![200u8; (width * height * 3) as usize];
+
+        let temp_file = NamedTempFile::new().unwrap();
+        let result = export_jpeg_with_profile(
+            &rgb_data,
+            width,
+            height,
+            95,
+            temp_file.path(),
+            &OutputColorSpace::AdobeRGB,
+        );
+
+        assert!(result.is_ok());
+
+        // Verify file was created
+        let metadata = std::fs::metadata(temp_file.path()).unwrap();
+        assert!(metadata.len() > 0);
     }
 }
