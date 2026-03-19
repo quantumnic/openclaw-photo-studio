@@ -1,6 +1,12 @@
 //! ocps-plugin-host — WASM Plugin Host
 //! Sandboxed plugin execution via wasmtime (Phase 6)
 
+pub mod manifest;
+pub mod registry;
+
+pub use manifest::{load_manifest, PluginError};
+pub use registry::PluginRegistry;
+
 pub fn version() -> &'static str {
     env!("CARGO_PKG_VERSION")
 }
