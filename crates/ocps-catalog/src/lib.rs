@@ -107,6 +107,34 @@ pub mod schema {
         )
     "#;
 
+    pub const CREATE_FTS: &str = r#"
+        CREATE VIRTUAL TABLE IF NOT EXISTS photos_fts USING fts5(
+            id UNINDEXED,
+            file_name,
+            camera_make,
+            camera_model,
+            content='photos',
+            content_rowid='rowid'
+        )
+    "#;
+
+    pub const CREATE_FTS_TRIGGERS: &str = r#"
+        CREATE TRIGGER IF NOT EXISTS photos_fts_insert AFTER INSERT ON photos BEGIN
+            INSERT INTO photos_fts(rowid, id, file_name, camera_make, camera_model)
+            VALUES (new.rowid, new.id, new.file_name, new.camera_make, new.camera_model);
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS photos_fts_delete AFTER DELETE ON photos BEGIN
+            DELETE FROM photos_fts WHERE rowid = old.rowid;
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS photos_fts_update AFTER UPDATE ON photos BEGIN
+            DELETE FROM photos_fts WHERE rowid = old.rowid;
+            INSERT INTO photos_fts(rowid, id, file_name, camera_make, camera_model)
+            VALUES (new.rowid, new.id, new.file_name, new.camera_make, new.camera_model);
+        END;
+    "#;
+
     pub const CREATE_MIGRATIONS: &str = r#"
         CREATE TABLE IF NOT EXISTS _migrations (
             version         INTEGER PRIMARY KEY,

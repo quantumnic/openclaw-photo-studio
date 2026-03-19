@@ -45,6 +45,8 @@ impl Catalog {
         self.conn
             .execute_batch(crate::schema::CREATE_PHOTO_KEYWORDS)?;
         self.conn.execute_batch(crate::schema::CREATE_EDITS)?;
+        self.conn.execute_batch(crate::schema::CREATE_FTS)?;
+        self.conn.execute_batch(crate::schema::CREATE_FTS_TRIGGERS)?;
         for index in crate::schema::INDEXES {
             self.conn.execute_batch(index)?;
         }
@@ -304,23 +306,25 @@ impl Catalog {
         Ok(count as u64)
     }
 
-    /// Search photos by query (simple text search)
-    pub fn search(&self, query: &str) -> Result<Vec<PhotoRecord>> {
-        let search_pattern = format!("%{}%", query);
+    /// Search photos by query using FTS5 full-text search
+    pub fn search(&self, query: &str, limit: u32) -> Result<Vec<PhotoRecord>> {
+        if query.trim().is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Add * for prefix search (e.g., "can" matches "canon")
+        let fts_query = format!("{}*", query.trim());
+
         let mut stmt = self.conn.prepare(
-            "SELECT * FROM photos
-             WHERE file_name LIKE ?
-                OR camera_make LIKE ?
-                OR camera_model LIKE ?
-             ORDER BY date_taken DESC
-             LIMIT 500",
+            "SELECT p.* FROM photos p
+             JOIN photos_fts f ON p.id = f.id
+             WHERE photos_fts MATCH ?
+             ORDER BY rank
+             LIMIT ?",
         )?;
 
         let photos = stmt
-            .query_map(
-                params![&search_pattern, &search_pattern, &search_pattern],
-                Self::row_to_photo,
-            )?
+            .query_map(params![&fts_query, limit], Self::row_to_photo)?
             .collect::<Result<Vec<_>, _>>()?;
 
         Ok(photos)
@@ -1337,5 +1341,78 @@ mod tests {
         }
 
         assert_eq!(catalog.get_rejected_count().unwrap(), 3);
+    }
+
+    #[test]
+    fn test_search_by_filename() {
+        let catalog = Catalog::in_memory().unwrap();
+        let now = Utc::now().to_rfc3339();
+
+        // Insert photo with specific name
+        let id = Uuid::new_v4().to_string();
+        catalog.conn.execute(
+            "INSERT INTO photos (id, file_path, file_name, file_size, date_imported)
+             VALUES (?, ?, ?, ?, ?)",
+            params![&id, "/path/DSC_4523.jpg", "DSC_4523.jpg", 1000, &now],
+        ).unwrap();
+
+        // Search by prefix
+        let results = catalog.search("DSC", 100).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].file_name, "DSC_4523.jpg");
+    }
+
+    #[test]
+    fn test_search_by_camera() {
+        let catalog = Catalog::in_memory().unwrap();
+        let now = Utc::now().to_rfc3339();
+
+        // Insert photo with Sony camera
+        let id = Uuid::new_v4().to_string();
+        catalog.conn.execute(
+            "INSERT INTO photos (id, file_path, file_name, file_size, date_imported, camera_make, camera_model)
+             VALUES (?, ?, ?, ?, ?, ?, ?)",
+            params![&id, "/test.jpg", "test.jpg", 1000, &now, "Sony", "A7III"],
+        ).unwrap();
+
+        // Search by camera make
+        let results = catalog.search("Sony", 100).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].camera_make, Some("Sony".to_string()));
+    }
+
+    #[test]
+    fn test_search_no_results() {
+        let catalog = Catalog::in_memory().unwrap();
+        let now = Utc::now().to_rfc3339();
+
+        let id = Uuid::new_v4().to_string();
+        catalog.conn.execute(
+            "INSERT INTO photos (id, file_path, file_name, file_size, date_imported)
+             VALUES (?, ?, ?, ?, ?)",
+            params![&id, "/test.jpg", "test.jpg", 1000, &now],
+        ).unwrap();
+
+        let results = catalog.search("ZZZNOMATCH", 100).unwrap();
+        assert_eq!(results.len(), 0);
+    }
+
+    #[test]
+    fn test_search_prefix() {
+        let catalog = Catalog::in_memory().unwrap();
+        let now = Utc::now().to_rfc3339();
+
+        // Insert photo with Canon camera
+        let id = Uuid::new_v4().to_string();
+        catalog.conn.execute(
+            "INSERT INTO photos (id, file_path, file_name, file_size, date_imported, camera_make, camera_model)
+             VALUES (?, ?, ?, ?, ?, ?, ?)",
+            params![&id, "/test.jpg", "test.jpg", 1000, &now, "Canon", "EOS R5"],
+        ).unwrap();
+
+        // Search with prefix
+        let results = catalog.search("Canon", 100).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].camera_make, Some("Canon".to_string()));
     }
 }

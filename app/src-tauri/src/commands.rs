@@ -1,6 +1,5 @@
 use std::sync::Mutex;
 use tauri::State;
-use base64::Engine;
 
 /// Sidecar sync mode
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -159,21 +158,45 @@ pub fn get_photos(
         .as_ref()
         .ok_or("No catalog open".to_string())?;
 
-    // Parse filter
-    let photo_filter = ocps_catalog::PhotoFilter {
-        rating_min: filter.get("rating_min").and_then(|v| v.as_u64()).map(|v| v as u8),
-        flag: filter.get("flag").and_then(|v| v.as_str()).map(|s| s.to_string()),
-        color_label: filter.get("color_label").and_then(|v| v.as_str()).map(|s| s.to_string()),
-        search: filter.get("search").and_then(|v| v.as_str()).map(|s| s.to_string()),
-        limit,
-        offset,
+    // Check if search query is provided
+    let search_query = filter.get("search").and_then(|v| v.as_str()).map(|s| s.to_string());
+
+    let photos = if let Some(query) = search_query {
+        // Use FTS5 search if search query is provided
+        if !query.trim().is_empty() {
+            catalog
+                .search(&query, limit)
+                .map_err(|e| format!("Search failed: {}", e))?
+        } else {
+            // Empty search, fall through to regular filtering
+            let photo_filter = ocps_catalog::PhotoFilter {
+                rating_min: filter.get("rating_min").and_then(|v| v.as_u64()).map(|v| v as u8),
+                flag: filter.get("flag").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                color_label: filter.get("color_label").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                search: None,
+                limit,
+                offset,
+            };
+            let sort = ocps_catalog::SortOrder::DateTaken;
+            catalog
+                .get_photos(&photo_filter, &sort)
+                .map_err(|e| format!("Failed to get photos: {}", e))?
+        }
+    } else {
+        // No search query, use regular filtering
+        let photo_filter = ocps_catalog::PhotoFilter {
+            rating_min: filter.get("rating_min").and_then(|v| v.as_u64()).map(|v| v as u8),
+            flag: filter.get("flag").and_then(|v| v.as_str()).map(|s| s.to_string()),
+            color_label: filter.get("color_label").and_then(|v| v.as_str()).map(|s| s.to_string()),
+            search: None,
+            limit,
+            offset,
+        };
+        let sort = ocps_catalog::SortOrder::DateTaken;
+        catalog
+            .get_photos(&photo_filter, &sort)
+            .map_err(|e| format!("Failed to get photos: {}", e))?
     };
-
-    let sort = ocps_catalog::SortOrder::DateTaken;
-
-    let photos = catalog
-        .get_photos(&photo_filter, &sort)
-        .map_err(|e| format!("Failed to get photos: {}", e))?;
 
     // Convert to JSON
     let json_photos = photos
@@ -688,14 +711,16 @@ fn is_raw_file(path: &std::path::Path) -> bool {
     }
 }
 
-/// Batch export multiple photos to JPEG
+/// Batch export multiple photos
 #[tauri::command]
 pub fn export_photos_batch(
     state: State<AppState>,
     photo_ids: Vec<String>,
     output_folder: String,
+    format: String,
     quality: u32,
     resize_long_edge: Option<u32>,
+    naming_template: String,
 ) -> Result<serde_json::Value, String> {
     let catalog_lock = state.catalog.lock().unwrap();
     let catalog = catalog_lock
@@ -712,7 +737,15 @@ pub fn export_photos_batch(
     let mut failed = 0;
     let mut errors = Vec::new();
 
-    for photo_id in photo_ids.iter() {
+    // Determine file extension from format
+    let extension = match format.as_str() {
+        "jpeg" => "jpg",
+        "png" => "png",
+        "tiff" => "tiff",
+        _ => "jpg",
+    };
+
+    for (index, photo_id) in photo_ids.iter().enumerate() {
         // Get photo
         let photo = match catalog.get_photo(photo_id) {
             Ok(Some(p)) => p,
@@ -728,13 +761,19 @@ pub fn export_photos_batch(
             }
         };
 
-        // Construct output path
+        // Construct output filename based on naming template
         let input_path = std::path::Path::new(&photo.file_path);
         let file_stem = input_path
             .file_stem()
             .and_then(|s| s.to_str())
             .unwrap_or("photo");
-        let output_path = output_dir.join(format!("{}.jpg", file_stem));
+
+        let output_name = naming_template
+            .replace("{original}", file_stem)
+            .replace("{seq}", &format!("{:03}", index + 1))
+            .replace("{date}", &chrono::Local::now().format("%Y-%m-%d").to_string());
+
+        let output_path = output_dir.join(format!("{}.{}", output_name, extension));
 
         // Try to export
         match export_single_photo(
@@ -1480,5 +1519,15 @@ pub fn render_preview_with_recipe(
         "data": base64_data,
         "width": final_width,
         "height": final_height,
+    }))
+}
+
+
+/// Check for tethered camera (stub for Phase 7)
+#[tauri::command]
+pub fn check_tethered_camera() -> Result<serde_json::Value, String> {
+    Ok(serde_json::json!({
+        "connected": false,
+        "message": "Tethering coming in Phase 7"
     }))
 }
