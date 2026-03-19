@@ -6,8 +6,16 @@ members = [
     "crates/ocps-xmp",
     "crates/ocps-export",
     "crates/ocps-plugin-host",
+    "crates/ocps-cli",
+    "tests",
 ]
 resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["Quantum Nic <quantumnic@users.noreply.github.com>"]
+license = "PolyForm-Noncommercial-1.0.0"
 
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }
