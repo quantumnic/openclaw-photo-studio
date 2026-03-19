@@ -5,8 +5,10 @@ pub mod jpeg;
 pub mod png;
 pub mod resize;
 pub mod dng;
+pub mod naming;
 
 pub use dng::export_dng;
+pub use naming::{apply_naming_template, PhotoForNaming};
 
 pub fn version() -> &'static str {
     env!("CARGO_PKG_VERSION")

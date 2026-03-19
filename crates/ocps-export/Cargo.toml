@@ -11,6 +11,7 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 anyhow = { workspace = true }
 log = { workspace = true }
+chrono = { workspace = true }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "tiff"] }
 
 [dev-dependencies]
