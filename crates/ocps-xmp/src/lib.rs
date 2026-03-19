@@ -3,9 +3,18 @@
 //! Adobe-compatible XMP sidecar read/write.
 //! Supports crs: (Camera Raw Settings), dc:, xmp:, Iptc4xmpCore: namespaces.
 
+pub mod exif;
+pub mod reader;
+pub mod writer;
+
 pub fn version() -> &'static str {
     env!("CARGO_PKG_VERSION")
 }
+
+// Re-export main functions
+pub use exif::{read_exif, ExifData};
+pub use reader::read_sidecar;
+pub use writer::write_sidecar;
 
 /// Develop settings extracted from an XMP sidecar (Adobe Camera Raw format).
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
@@ -53,25 +62,7 @@ pub enum XmpError {
     NotXmp,
 }
 
-/// Read XMP sidecar file and return develop settings + IPTC data.
-/// Phase 1: returns default/empty — real parser in Phase 4.
-pub fn read_sidecar(
-    _path: &std::path::Path,
-) -> Result<(XmpDevelopSettings, IptcData), XmpError> {
-    // TODO: Phase 1/4 — implement XML parsing of Adobe XMP sidecar
-    Ok((XmpDevelopSettings::default(), IptcData::default()))
-}
-
-/// Write develop settings + IPTC to an XMP sidecar file.
-/// Adobe-compatible format using crs: namespace.
-pub fn write_sidecar(
-    _path: &std::path::Path,
-    _develop: &XmpDevelopSettings,
-    _iptc: &IptcData,
-) -> Result<(), XmpError> {
-    // TODO: Phase 1/4 — implement XMP serialization
-    Ok(())
-}
+// Note: read_sidecar and write_sidecar are now re-exported from reader and writer modules
 
 #[cfg(test)]
 mod tests {
