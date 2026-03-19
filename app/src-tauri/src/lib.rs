@@ -48,6 +48,7 @@ pub fn run() {
             commands::invalidate_preview,
             commands::get_cache_stats,
             commands::render_preview_with_recipe,
+            commands::check_tethered_camera,
         ])
         .setup(|app| {
             #[cfg(debug_assertions)]

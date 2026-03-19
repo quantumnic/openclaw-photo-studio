@@ -1,6 +1,6 @@
 [package]
 name = "ocps-app"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 description = "OpenClaw Photo Studio — Desktop application"
 license = "LicenseRef-PolyForm-Noncommercial-1.0.0"
@@ -28,6 +28,7 @@ ocps-plugin-host = { path = "../../crates/ocps-plugin-host" }
 dirs = "5"
 uuid = { workspace = true }
 base64 = "0.22"
+chrono = { workspace = true }
 
 [profile.release]
 opt-level = 3
