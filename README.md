@@ -28,37 +28,47 @@ OpenClaw Photo Studio (OCPS) is a professional photo workflow application for RA
 ## Features
 
 ### Library
-- Import from folders, cards, cameras
-- Grid, Loupe, Compare, Survey views
-- Rating (★), Flags (Pick/Reject), Color Labels
-- Collections, Smart Collections, Quick Collection
-- Hierarchical Keywords, IPTC Metadata
-- Full-text search, advanced filters
-- Virtual Copies, Stacks
+- ✅ Import from folders (Copy/Move/Add)
+- ✅ Grid, Loupe, Compare, Survey views
+- ✅ Rating (0-5★), Flags (Pick/Reject), Color Labels
+- ✅ Collections, Smart Collections, Quick Collection
+- ✅ Hierarchical Keywords, IPTC Metadata
+- ✅ Full-text search (FTS5), advanced filters
+- ✅ Virtual Copies, Stacks
+- ⏳ Tethered capture (Phase 7)
 
 ### Develop
-- Non-destructive RAW editing
-- White Balance, Exposure, Tone, HSL, Color Grading
-- Tone Curves (Parametric + Point)
-- Sharpening, Noise Reduction, Dehaze, Clarity
-- Local Adjustments (Brush, Gradient, Radial)
-- Lens Corrections (LensFun)
-- Crop & Transform
-- History, Snapshots, Before/After
-- **Copy/Paste edits across photos in 2 keystrokes**
+- ✅ Non-destructive RAW editing
+- ✅ White Balance, Exposure, Contrast, Tone controls
+- ✅ Highlights, Shadows, Whites, Blacks, Clarity
+- ✅ Vibrance, Saturation (HSV-based)
+- ✅ Sharpening (unsharp mask)
+- ✅ Crop with aspect ratios
+- ✅ Tone Curves (Parametric control)
+- ✅ Color Grading (3-way wheels)
+- ✅ History, Snapshots, Before/After
+- ✅ **Copy/Paste edits across photos in 2 keystrokes**
+- ⏳ Noise Reduction (coming)
+- ⏳ Dehaze (coming)
+- ⏳ Local Adjustments (Phase 5)
+- ⏳ Lens Corrections (Phase 5)
 
 ### Export
-- JPEG, TIFF, PNG, WebP, AVIF, DNG
-- Resize, Output Sharpening, Watermark
-- Naming templates, Export presets
-- Batch export (background processing)
+- ✅ JPEG (quality 60-100)
+- ✅ PNG (8-bit sRGB)
+- ✅ Resize with Lanczos3 resampling
+- ✅ Naming templates ({original}, {date}, {seq})
+- ✅ Batch export with progress tracking
+- ⏳ TIFF, WebP, AVIF (coming)
+- ⏳ Output Sharpening, Watermark (coming)
 
 ### Compatibility
-- XMP sidecar read/write (Adobe-compatible)
-- Lightroom catalog import
-- Lightroom preset import (.xmp, .lrtemplate)
-- EXIF, IPTC, XMP metadata
-- DNG support
+- ✅ XMP sidecar read/write (Adobe-compatible)
+- ✅ Lightroom catalog import (.lrcat)
+- ✅ Lightroom preset import (.xmp, .lrtemplate)
+- ✅ EXIF, IPTC, XMP metadata
+- ✅ RAW: ARW, NEF, RAF, ORF, RW2, CR2, DNG
+- ⏳ CR3 support (Canon R-series) coming
 
 ## Screenshots
 
@@ -152,9 +162,18 @@ OCPS builds on the shoulders of excellent open-source projects:
 - [dcraw](https://www.dechifro.org/dcraw/) — RAW processing reference
 - [darktable](https://www.darktable.org/) / [RawTherapee](https://rawtherapee.com/) — Algorithmic inspiration (studied, not copied)
 
-## Status
+## Current Status
 
-🚧 **Pre-Alpha** — Under active development. Not ready for production use.
+**v0.2.0 Alpha** — Core pipeline complete, 200+ tests passing.
+
+✅ RAW decode, demosaic, CPU pipeline operational
+✅ Full develop module with all basic adjustments
+✅ Catalog, import, search, collections working
+✅ Copy/Paste, presets, batch export functional
+✅ XMP sidecar read/write, Lightroom import operational
+🚧 GPU rendering (Phase 3) — performance optimization in progress
+🚧 Local adjustments (Phase 5) — masks and selective editing coming
+🚧 Tethering (Phase 7) — camera capture support planned
 
 ---
 

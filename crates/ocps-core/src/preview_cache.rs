@@ -146,7 +146,7 @@ impl PreviewCache {
     /// Get disk path for a photo ID
     fn disk_path(&self, photo_id: &str) -> PathBuf {
         // Sanitize photo_id to be filesystem-safe
-        let safe_id = photo_id.replace('/', "_").replace('\\', "_");
+        let safe_id = photo_id.replace(['/', '\\'], "_");
         self.cache_dir.join(format!("{}.jpg", safe_id))
     }
 
