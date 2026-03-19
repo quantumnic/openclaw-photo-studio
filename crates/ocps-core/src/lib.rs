@@ -15,39 +15,12 @@ pub use raw::{
     thumbnail::{extract_thumbnail, quick_thumbnail, ThumbnailError},
 };
 
-pub mod pipeline {
-    //! GPU-accelerated processing pipeline (wgpu)
-    //! Phase 1: Placeholder
+pub mod pipeline;
 
-    #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-    pub struct PipelineSettings {
-        pub exposure: f32,
-        pub contrast: i32,
-        pub highlights: i32,
-        pub shadows: i32,
-        pub whites: i32,
-        pub blacks: i32,
-        pub clarity: i32,
-        pub vibrance: i32,
-        pub saturation: i32,
-    }
-
-    impl Default for PipelineSettings {
-        fn default() -> Self {
-            Self {
-                exposure: 0.0,
-                contrast: 0,
-                highlights: 0,
-                shadows: 0,
-                whites: 0,
-                blacks: 0,
-                clarity: 0,
-                vibrance: 0,
-                saturation: 0,
-            }
-        }
-    }
-}
+pub use pipeline::{
+    ColorGradingSettings, CropSettings, EditRecipe, ImageProcessor, NoiseReductionSettings,
+    RgbImage16, RgbImage8, SharpeningSettings, WhiteBalance,
+};
 
 pub mod cache {
     //! Preview and thumbnail cache management
@@ -84,9 +57,10 @@ mod tests {
 
     #[test]
     fn test_pipeline_defaults() {
-        let settings = pipeline::PipelineSettings::default();
-        assert_eq!(settings.exposure, 0.0);
-        assert_eq!(settings.contrast, 0);
+        let recipe = pipeline::EditRecipe::default();
+        assert_eq!(recipe.exposure, 0.0);
+        assert_eq!(recipe.contrast, 0);
+        assert!(recipe.is_identity());
     }
 
     #[test]

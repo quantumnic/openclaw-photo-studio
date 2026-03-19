@@ -22,19 +22,22 @@ pub fn read_sidecar(path: &Path) -> Result<(XmpDevelopSettings, IptcData), XmpEr
     let mut text_buffer = String::new();
     let mut attributes = HashMap::new();
 
+    let mut buf = Vec::new();
     loop {
-        match xml_reader.read_event() {
+        buf.clear();
+        match xml_reader.read_event_into(&mut buf) {
             Ok(Event::Start(e)) | Ok(Event::Empty(e)) => {
                 let name = String::from_utf8_lossy(e.name().as_ref()).to_string();
                 current_element = name.clone();
 
                 // Parse attributes
                 attributes.clear();
+                let decoder = xml_reader.decoder();
                 for attr in e.attributes() {
                     if let Ok(attr) = attr {
                         let key = String::from_utf8_lossy(attr.key.as_ref()).to_string();
                         let value = attr
-                            .decode_and_unescape_value(&xml_reader)
+                            .decode_and_unescape_value(decoder)
                             .unwrap_or_default()
                             .to_string();
                         attributes.insert(key, value);
@@ -56,7 +59,7 @@ pub fn read_sidecar(path: &Path) -> Result<(XmpDevelopSettings, IptcData), XmpEr
                 parse_iptc_attributes(&attributes, &mut iptc);
             }
             Ok(Event::Text(e)) => {
-                text_buffer = e.unescape().unwrap_or_default().to_string();
+                text_buffer = e.unescape().map(|s| s.to_string()).unwrap_or_default();
             }
             Ok(Event::End(_)) => {
                 // Process text content if any
