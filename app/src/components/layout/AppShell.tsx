@@ -5,6 +5,7 @@ import { RightSidebar } from "./RightSidebar";
 import { MainView } from "./MainView";
 import { Filmstrip } from "./Filmstrip";
 import { CommandPalette } from "../common/CommandPalette";
+import { DiagnosticsView } from "../diagnostics/DiagnosticsView";
 import { ShortcutEngine } from "../../lib/shortcuts";
 
 type Module = "library" | "develop" | "map" | "print";
@@ -19,7 +20,9 @@ export function AppShell(props: AppShellProps) {
   const [rightOpen, setRightOpen] = createSignal(true);
   const [filmstripOpen, setFilmstripOpen] = createSignal(true);
   const [selectedPhotoId, setSelectedPhotoId] = createSignal<string | null>(null);
+  const [selectedPhotoIds, setSelectedPhotoIds] = createSignal<string[]>([]);
   const [commandPaletteOpen, setCommandPaletteOpen] = createSignal(false);
+  const [diagnosticsOpen, setDiagnosticsOpen] = createSignal(false);
 
   // Create shortcut engine
   const shortcuts = new ShortcutEngine();
@@ -33,6 +36,7 @@ export function AppShell(props: AppShellProps) {
     setRightOpen(o => !o);
   });
   shortcuts.register("ui.command_palette", () => setCommandPaletteOpen(true));
+  shortcuts.register("ui.diagnostics", () => setDiagnosticsOpen(true));
 
   // Set context based on active module
   const updateContext = () => {
@@ -83,6 +87,7 @@ export function AppShell(props: AppShellProps) {
           <MainView
             module={activeModule()}
             selectedPhotoId={selectedPhotoId()}
+            selectedPhotoIds={selectedPhotoIds()}
             onSelectPhoto={setSelectedPhotoId}
           />
           <Show when={filmstripOpen()}>
@@ -102,6 +107,11 @@ export function AppShell(props: AppShellProps) {
         onClose={() => setCommandPaletteOpen(false)}
         onExecute={(action) => shortcuts.execute(action)}
       />
+
+      {/* Diagnostics Overlay */}
+      <Show when={diagnosticsOpen()}>
+        <DiagnosticsView onClose={() => setDiagnosticsOpen(false)} />
+      </Show>
     </div>
   );
 }

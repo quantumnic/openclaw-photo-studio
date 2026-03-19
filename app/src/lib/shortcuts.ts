@@ -30,6 +30,7 @@ export const DEFAULT_BINDINGS: ShortcutBinding[] = [
   { key: "cmd+shift+e", action: "export.open", context: "global", description: "Export" },
   { key: "cmd+shift+i", action: "import.open", context: "global", description: "Import folder" },
   { key: "cmd+k", action: "ui.command_palette", context: "global", description: "Command palette" },
+  { key: "cmd+shift+d", action: "ui.diagnostics", context: "global", description: "Diagnostics" },
 ];
 
 export class ShortcutEngine {

@@ -3,12 +3,14 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { createSignal, onMount, Show, For, onCleanup, createStore, createEffect } from "solid-js";
 import { FilterBar, FilterState } from "../library/FilterBar";
 import { MapView } from "../map/MapView";
+import { PrintView } from "../print/PrintView";
 
 type Module = "library" | "develop" | "map" | "print";
 
 interface MainViewProps {
   module: Module;
   selectedPhotoId: string | null;
+  selectedPhotoIds: string[];
   onSelectPhoto: (id: string | null) => void;
 }
 
@@ -23,7 +25,7 @@ export function MainView(props: MainViewProps) {
       )}
       {props.module === "develop" && <DevelopView selectedPhotoId={props.selectedPhotoId} />}
       {props.module === "map" && <MapView />}
-      {props.module === "print" && <PlaceholderView label="Print / Contact Sheet" emoji="🖨️" phase="Phase 7" />}
+      {props.module === "print" && <PrintView selectedPhotoIds={props.selectedPhotoIds} />}
     </main>
   );
 }
