@@ -14,7 +14,7 @@ pub fn version() -> &'static str {
 // Re-export main functions
 pub use exif::{read_exif, ExifData};
 pub use reader::read_sidecar;
-pub use writer::write_sidecar;
+pub use writer::{merge_sidecar, write_sidecar};
 
 /// Develop settings extracted from an XMP sidecar (Adobe Camera Raw format).
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
