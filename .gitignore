@@ -1,0 +1,30 @@
+# Rust
+target/
+Cargo.lock
+
+# Node
+node_modules/
+app/dist/
+app/.tauri/
+
+# OS
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# Tauri
+app/src-tauri/target/
+
+# IDE
+.vscode/
+.idea/
+*.iml
+
+# Env
+.env
+.env.local
+
+# Test artifacts
+tests/golden-images/generated/
+tests/fixtures/generated/

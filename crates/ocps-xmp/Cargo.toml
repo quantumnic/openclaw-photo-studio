@@ -1,0 +1,13 @@
+[package]
+name = "ocps-xmp"
+version = "0.1.0"
+edition = "2021"
+description = "OpenClaw Photo Studio — XMP/IPTC/EXIF metadata engine"
+license = "LicenseRef-PolyForm-Noncommercial-1.0.0"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+log = { workspace = true }

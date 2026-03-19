@@ -1,0 +1,16 @@
+[package]
+name = "ocps-catalog"
+version = "0.1.0"
+edition = "2021"
+description = "OpenClaw Photo Studio — Catalog Engine (SQLite, search, collections)"
+license = "LicenseRef-PolyForm-Noncommercial-1.0.0"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+log = { workspace = true }
+rusqlite = { version = "0.31", features = ["bundled"] }

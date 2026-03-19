@@ -1,0 +1,31 @@
+[package]
+name = "ocps-app"
+version = "0.1.0"
+edition = "2021"
+description = "OpenClaw Photo Studio — Desktop application"
+license = "LicenseRef-PolyForm-Noncommercial-1.0.0"
+
+[lib]
+name = "ocps_app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-shell = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = "2"
+serde = { workspace = true }
+serde_json = { workspace = true }
+ocps-core = { path = "../../crates/ocps-core" }
+ocps-catalog = { path = "../../crates/ocps-catalog" }
+ocps-xmp = { path = "../../crates/ocps-xmp" }
+ocps-export = { path = "../../crates/ocps-export" }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
