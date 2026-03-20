@@ -37,6 +37,14 @@ pub mod presets;
 
 pub use presets::{Preset, PresetLibrary};
 
+pub mod hdr;
+
+pub use hdr::{merge_hdr, HdrError, HdrMergeSettings, HdrResult};
+
+pub mod panorama;
+
+pub use panorama::{stitch_panorama, PanoramaError, PanoramaResult, PanoramaSettings, ProjectionType};
+
 pub mod cache {
     //! Preview and thumbnail cache management
 

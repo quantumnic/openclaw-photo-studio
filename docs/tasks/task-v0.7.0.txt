@@ -1,0 +1,327 @@
+## Task: v0.7.0 — Gphoto2 Tethering, AI Denoise, Face Detection, Performance
+
+Read docs/concept/FEATURES.md sections G (Tethering) and H (AI) first.
+Current branch: develop. Latest commit: 9300895. Run git pull first!
+
+### PART A: Real Tethering with gphoto2 (Linux/macOS)
+
+The mock tether exists. Now add a real gphoto2-based provider.
+
+Add to crates/ocps-plugin-host/Cargo.toml:
+gphoto2 = { version = "0.3", optional = true }
+[features]
+gphoto2 = ["dep:gphoto2"]
+
+Create crates/ocps-plugin-host/src/gphoto_provider.rs:
+```rust
+#[cfg(feature = "gphoto2")]
+pub struct GphotoProvider {
+    context: Option<gphoto2::Context>,
+    camera: Option<gphoto2::Camera>,
+}
+
+#[cfg(feature = "gphoto2")]
+impl TetherProvider for GphotoProvider {
+    fn name(&self) -> &str { "gPhoto2" }
+    
+    fn discover_cameras(&self) -> Vec<TetheredCamera> {
+        let ctx = gphoto2::Context::new().ok();
+        let ctx = match ctx { Some(c) => c, None => return vec![] };
+        // Use gphoto2::Camera::autodetect() to find cameras
+        // Return list of TetheredCamera
+        vec![]  // stub, fill in with real gphoto2 calls
+    }
+    
+    fn connect(&mut self, _camera_id: &str) -> Result<(), TetherError> {
+        let ctx = gphoto2::Context::new().map_err(|e| TetherError::ConnectionFailed(e.to_string()))?;
+        let camera = gphoto2::Camera::autodetect(&ctx).map_err(|e| TetherError::ConnectionFailed(e.to_string()))?;
+        self.camera = Some(camera);
+        self.context = Some(ctx);
+        Ok(())
+    }
+    
+    fn disconnect(&mut self) -> Result<(), TetherError> {
+        self.camera = None;
+        self.context = None;
+        Ok(())
+    }
+    
+    fn capture(&mut self) -> Result<Vec<u8>, TetherError> {
+        let camera = self.camera.as_ref().ok_or(TetherError::NotConnected)?;
+        let ctx = self.context.as_ref().ok_or(TetherError::NotConnected)?;
+        // Trigger capture, download file
+        // camera.capture_image(ctx)?
+        // Read file data
+        Ok(vec![])  // stub
+    }
+    
+    fn live_view_frame(&mut self) -> Result<Option<Vec<u8>>, TetherError> {
+        // capture_preview gives live view frame as JPEG
+        Ok(None)
+    }
+}
+```
+
+Note: gphoto2 crate may not compile on all platforms. Make it truly optional:
+- If feature not enabled: only MockTetherProvider available
+- If feature enabled and library present: GphotoProvider available
+- Auto-detect which to use at runtime
+
+Tauri commands: update discover_cameras to try GphotoProvider first, fall back to Mock.
+
+Tests:
+- test_gphoto_provider_compiles: just verify it compiles with feature flag
+- test_tether_provider_mock_still_works: mock provider unchanged
+- test_discover_returns_mock_when_no_camera: when no camera connected, returns mock list
+
+### PART B: AI Denoise (ONNX-based, optional)
+
+Add AI-powered noise reduction as an optional plugin.
+
+Add to crates/ocps-plugin-host/Cargo.toml:
+ort = { version = "2", optional = true }  # ONNX Runtime
+[features]
+ai = ["dep:ort"]
+
+Create crates/ocps-plugin-host/src/ai_denoise.rs:
+
+```rust
+#[cfg(feature = "ai")]
+pub struct AiDenoisePlugin {
+    session: ort::Session,
+}
+
+#[cfg(feature = "ai")]
+impl AiDenoisePlugin {
+    pub fn new(model_path: &Path) -> Result<Self, PluginError> {
+        let session = ort::Session::builder()?
+            .with_model_from_file(model_path)?;
+        Ok(Self { session })
+    }
+    
+    pub fn denoise(
+        &self,
+        rgb_data: &[u8],   // 8-bit sRGB
+        width: u32,
+        height: u32,
+        strength: f32,     // 0.0 - 1.0
+    ) -> Result<Vec<u8>, PluginError> {
+        // Preprocess: normalize to [-1, 1] float tensor
+        // Run inference
+        // Postprocess: back to u8
+        // For now: if no model loaded, fall through to CPU NR
+        Ok(rgb_data.to_vec())  // stub: identity
+    }
+}
+```
+
+Also create a CPU fallback that wraps the existing NR pipeline:
+pub fn denoise_cpu_fallback(data: &[u8], width: u32, height: u32, strength: f32) -> Vec<u8>
+// Just call the existing NR pipeline with scaled strength
+
+Tauri command:
+pub fn apply_ai_denoise(
+    state, photo_id: String, strength: f32
+) -> Result<serde_json::Value, CommandError>
+// Try AI if available, fall back to CPU NR
+// Return { method: "ai" | "cpu", duration_ms }
+
+UI: In Detail panel, add "AI Denoise" button below the NR sliders.
+Shows: "AI (requires model)" grayed out if no model, "AI" active if model present.
+Model download: show link to docs on how to download compatible ONNX model.
+
+Tests:
+- test_cpu_fallback_denoise: verify CPU fallback runs without error
+- test_denoise_returns_same_size: output same dimensions as input
+- test_denoise_strength_zero_minimal_change: near-identity at strength 0
+
+### PART C: Face Detection (local, privacy-first)
+
+Add basic face detection using a lightweight model.
+
+Create crates/ocps-plugin-host/src/face_detect.rs:
+
+Since we don't want to add a heavy ML dependency, implement a simplified Viola-Jones
+detector or use the haar-cascade approach:
+
+Add imageproc to dependencies (already in ocps-export, add to plugin-host):
+imageproc = "0.24"
+
+Implement a simplified face region detector:
+```rust
+pub struct FaceRegion {
+    pub x: f32,      // normalized 0-1
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+    pub confidence: f32,
+}
+
+pub fn detect_faces_simple(
+    rgb_data: &[u8],
+    width: u32,
+    height: u32,
+) -> Vec<FaceRegion>
+// Simplified implementation:
+// 1. Convert to grayscale
+// 2. Apply simple skin-tone detection in HSV space
+// 3. Find connected regions of skin-tone pixels
+// 4. Filter by aspect ratio (faces are roughly square)
+// 5. Return top N candidates by size
+// This is not ML-based but gives approximate results
+```
+
+Wire into catalog:
+- After import, optionally run face detection on thumbnails
+- Store face regions as JSON in catalog
+- "Focus-Check Mode": zoom to detected face region on E key
+
+Add Tauri command:
+- detect_faces(photo_id: String) -> Result<Vec<serde_json::Value>, CommandError>
+- get_face_regions(photo_id: String) -> Result<Vec<serde_json::Value>, CommandError>
+
+Add face_regions column to photos table (migration):
+ALTER TABLE photos ADD COLUMN face_regions TEXT;
+
+Update LoupeView: if face regions exist and "zoom to face" is enabled:
+- Z key: instead of toggle 1:1, zoom to first detected face region
+- Double-click on face region in loupe: zoom to that face
+
+Tests:
+- test_face_detect_no_faces: uniform grey image -> empty result
+- test_face_detect_returns_normalized_coords: all x/y/w/h between 0 and 1
+- test_face_regions_stored_in_catalog: store face regions, retrieve, verify
+
+### PART D: Performance — Parallel Import
+
+The import pipeline is currently sequential.
+Add parallel processing for large imports.
+
+In crates/ocps-catalog/src/db.rs, update import_folder:
+
+```rust
+use rayon::prelude::*;
+
+pub fn import_folder_parallel(
+    &mut self,
+    folder_path: &Path,
+    mode: ImportMode,
+) -> Result<ImportResult, CatalogError> {
+    // 1. Walk directory, collect file paths
+    let files: Vec<PathBuf> = walkdir::WalkDir::new(folder_path)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(|e| is_supported_extension(e.path()))
+        .map(|e| e.path().to_owned())
+        .collect();
+    
+    // 2. Extract EXIF in parallel using rayon
+    let metadata: Vec<(PathBuf, Option<FileMetadata>)> = files
+        .par_iter()
+        .map(|path| {
+            let meta = extract_file_metadata(path).ok();
+            (path.clone(), meta)
+        })
+        .collect();
+    
+    // 3. Insert into DB (sequential - SQLite doesn't handle parallel writes well)
+    let mut result = ImportResult::default();
+    for (path, meta) in metadata {
+        match self.insert_photo(&path, meta) {
+            Ok(inserted) => if inserted { result.inserted += 1 } else { result.skipped += 1 },
+            Err(e) => result.errors.push(e.to_string()),
+        }
+        result.total += 1;
+    }
+    
+    Ok(result)
+}
+```
+
+Also: generate thumbnails in parallel after import:
+```rust
+pub async fn generate_thumbnails_parallel(
+    photo_ids: Vec<String>,
+    catalog_path: &Path,
+) -> Result<u32, CatalogError>
+// Use tokio::task::spawn_blocking for each thumbnail generation
+// Process in batches of 8 to avoid OOM
+```
+
+Add progress callback:
+```rust
+pub fn import_folder_with_progress<F>(
+    &mut self,
+    folder_path: &Path,
+    mode: ImportMode,
+    on_progress: F,
+) -> Result<ImportResult, CatalogError>
+where F: Fn(u32, u32) + Send  // (current, total)
+```
+
+Update import_folder Tauri command to emit Tauri events for progress:
+```rust
+app_handle.emit("import-progress", serde_json::json!({ "current": n, "total": total }))?;
+```
+
+Frontend: listen to import-progress event and update progress bar in real-time.
+
+Tests:
+- test_parallel_import_same_results: verify parallel import produces same photo count as sequential
+- test_import_progress_callback: verify callback called with increasing numbers
+- test_import_1000_synthetic_files: create 1000 temp files, import, verify performance < 5s
+  (use criterion for this, or just time with std::time::Instant)
+
+### PART E: Duplicate Detection
+
+The catalog has file_hash for SHA-256 but duplicate detection isn't surfaced in UI.
+
+Add to crates/ocps-catalog/src/db.rs:
+```rust
+pub fn find_duplicates(&self) -> Result<Vec<Vec<String>>, CatalogError>
+// GROUP BY file_hash HAVING COUNT(*) > 1
+// Return groups of photo IDs that share the same hash
+
+pub fn find_near_duplicates(&self, threshold: f32) -> Result<Vec<(String, String, f32)>, CatalogError>
+// Returns (id1, id2, similarity_score) pairs
+// Simple approach: compare EXIF data (same camera, date within 1 second, similar size)
+// "Near duplicate" = same EXIF date AND same camera model AND file_size within 10%
+```
+
+Add Tauri command: find_duplicates() -> Vec<Vec<serde_json::Value>>
+
+Add "Find Duplicates" option to catalog menu / command palette.
+Shows a dialog with duplicate groups:
+- Each group: photos side by side
+- "Keep First", "Keep Largest", "Keep All" buttons
+- Delete selected duplicates from catalog (not disk)
+
+Tests:
+- test_find_duplicates_none: no duplicates -> empty result
+- test_find_duplicates_exact: insert photo twice (same hash) -> one group of 2
+- test_find_near_duplicates: same date+camera+size photos -> detected as near-duplicates
+
+### PART F: MANDATORY
+
+cargo clean if df -h / shows < 5GB free.
+cargo test --all — must pass.
+cargo clippy --all — clean.
+Target: >345 tests.
+
+### PART G: Commits and Push (to develop branch)
+
+Stay on develop branch!
+git checkout develop
+
+Git config: user.name="Quantum Nic", user.email="quantumnic@users.noreply.github.com"
+
+Four commits:
+1. "feat(tether): gphoto2 provider with optional feature flag"
+2. "feat(ai): AI denoise stub, face detection, ONNX foundation"
+3. "feat(perf): parallel import with rayon, progress events"
+4. "feat(catalog): duplicate detection and near-duplicate finder"
+
+Push to origin develop.
+
+When completely finished, run:
+openclaw system event --text "Done: v0.7.0 dev — gphoto2, AI Denoise, Face Detection, Parallel Import, Duplicate Detection — Tests gruen" --mode now

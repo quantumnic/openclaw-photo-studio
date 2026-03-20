@@ -83,7 +83,7 @@ pub fn generate_gradient_mask(
         return mask;
     }
 
-    let length = length_sq.sqrt();
+    let _length = length_sq.sqrt();
 
     for y in 0..height {
         for x in 0..width {
@@ -107,6 +107,7 @@ pub fn generate_gradient_mask(
 }
 
 /// Generate a radial/elliptical mask
+#[allow(clippy::too_many_arguments)]
 pub fn generate_radial_mask(
     width: u32,
     height: u32,
@@ -194,6 +195,7 @@ pub fn generate_brush_mask(
 }
 
 /// Paint a circular brush stroke onto the mask
+#[allow(clippy::too_many_arguments)]
 fn paint_circle(
     mask: &mut [f32],
     width: u32,
@@ -279,7 +281,7 @@ fn apply_local_settings(image: &mut RgbImage16, settings: &LocalSettings) {
 
     if settings.sharpness != 0 {
         // Convert sharpness to sharpening amount
-        let amount = settings.sharpness.abs() as u32;
+        let amount = settings.sharpness.unsigned_abs();
         process::apply_sharpening(image, amount, 1.0);
     }
 }
@@ -293,8 +295,7 @@ fn blend_with_mask(
     height: u32,
 ) {
     let pixels = (width * height) as usize;
-    for i in 0..pixels {
-        let mask_value = mask[i];
+    for (i, &mask_value) in mask.iter().enumerate().take(pixels) {
         let inv_mask = 1.0 - mask_value;
 
         // Blend RGB channels

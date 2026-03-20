@@ -8,7 +8,13 @@ pub mod context;
 pub mod pipeline;
 
 #[cfg(feature = "gpu")]
+pub mod full_pipeline;
+
+#[cfg(feature = "gpu")]
 pub use context::GpuContext;
 
 #[cfg(feature = "gpu")]
 pub use pipeline::{apply_exposure_gpu, GpuError};
+
+#[cfg(feature = "gpu")]
+pub use full_pipeline::process_image_gpu;

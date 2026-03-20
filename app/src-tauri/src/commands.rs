@@ -1,5 +1,6 @@
 use std::sync::Mutex;
 use tauri::State;
+use serde::{Deserialize, Serialize};
 
 /// Standard error type for all Tauri commands
 #[derive(Debug, serde::Serialize)]
@@ -84,8 +85,10 @@ pub struct AppState {
     pub preset_library: Mutex<ocps_core::PresetLibrary>,
     pub sidecar_mode: Mutex<SidecarMode>,
     pub plugin_registry: Mutex<ocps_plugin_host::PluginRegistry>,
+    pub marketplace: Mutex<ocps_plugin_host::Marketplace>,
     pub preview_cache: Mutex<ocps_core::preview_cache::PreviewCache>,
     pub histories: Mutex<std::collections::HashMap<String, ocps_core::EditHistory>>,
+    #[allow(dead_code)]
     pub render_cache: Mutex<crate::render::RenderCache>,
     pub tether_provider: Mutex<Box<dyn ocps_plugin_host::TetherProvider>>,
 }
@@ -127,6 +130,7 @@ impl AppState {
             preset_library: Mutex::new(preset_library),
             sidecar_mode: Mutex::new(SidecarMode::Auto),
             plugin_registry: Mutex::new(plugin_registry),
+            marketplace: Mutex::new(ocps_plugin_host::Marketplace::new()),
             preview_cache: Mutex::new(preview_cache),
             histories: Mutex::new(std::collections::HashMap::new()),
             render_cache: Mutex::new(crate::render::RenderCache::new(10)),
@@ -2224,4 +2228,285 @@ pub fn get_edit_history(state: State<AppState>, photo_id: String) -> Result<Vec<
         .collect();
 
     Ok(entries)
+}
+
+// ===== DISPLAY MANAGEMENT =====
+
+/// Display information for second monitor support
+#[derive(Debug, Serialize, Deserialize)]
+pub struct DisplayInfo {
+    pub display_count: usize,
+    pub primary: DisplayDimensions,
+    pub secondary: Option<DisplayDimensions>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct DisplayDimensions {
+    pub width: u32,
+    pub height: u32,
+}
+
+/// Get display information (for second monitor support)
+#[tauri::command]
+pub fn get_display_info() -> Result<DisplayInfo, CommandError> {
+    // Stub implementation - returns basic info
+    // In production, would use Tauri window APIs to enumerate displays
+    Ok(DisplayInfo {
+        display_count: 1,
+        primary: DisplayDimensions {
+            width: 1920,
+            height: 1080,
+        },
+        secondary: None,
+    })
+}
+
+// ===== PLUGIN MARKETPLACE =====
+
+/// Get all plugins from the marketplace
+#[tauri::command]
+pub fn get_marketplace_plugins(
+    state: State<AppState>,
+) -> Result<Vec<serde_json::Value>, CommandError> {
+    let mut marketplace = state
+        .marketplace
+        .lock()
+        .map_err(|e| CommandError::internal_error("Lock marketplace", e.to_string()))?;
+
+    marketplace
+        .fetch_plugins()
+        .map_err(|e| CommandError::internal_error("Fetch plugins", e))?;
+
+    let plugins: Vec<serde_json::Value> = marketplace
+        .plugins
+        .iter()
+        .map(|p| {
+            serde_json::json!({
+                "id": p.id,
+                "name": p.name,
+                "version": p.version,
+                "description": p.description,
+                "author": p.author,
+                "download_url": p.download_url,
+                "api_version": p.api_version,
+                "plugin_type": p.plugin_type,
+                "downloads": p.downloads,
+                "rating": p.rating,
+            })
+        })
+        .collect();
+
+    Ok(plugins)
+}
+
+/// Search marketplace plugins
+#[tauri::command]
+pub fn search_marketplace(
+    state: State<AppState>,
+    query: String,
+) -> Result<Vec<serde_json::Value>, CommandError> {
+    let marketplace = state
+        .marketplace
+        .lock()
+        .map_err(|e| CommandError::internal_error("Lock marketplace", e.to_string()))?;
+
+    let results: Vec<serde_json::Value> = marketplace
+        .search(&query)
+        .iter()
+        .map(|p| {
+            serde_json::json!({
+                "id": p.id,
+                "name": p.name,
+                "version": p.version,
+                "description": p.description,
+                "author": p.author,
+                "download_url": p.download_url,
+                "api_version": p.api_version,
+                "plugin_type": p.plugin_type,
+                "downloads": p.downloads,
+                "rating": p.rating,
+            })
+        })
+        .collect();
+
+    Ok(results)
+}
+
+/// Install a plugin from the marketplace
+#[tauri::command]
+pub fn install_plugin(
+    state: State<AppState>,
+    plugin_id: String,
+) -> Result<serde_json::Value, CommandError> {
+    let marketplace = state
+        .marketplace
+        .lock()
+        .map_err(|e| CommandError::internal_error("Lock marketplace", e.to_string()))?;
+
+    // Get plugin directory
+    let plugin_dir = dirs::data_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join("openclaw-photo-studio")
+        .join("plugins");
+
+    std::fs::create_dir_all(&plugin_dir)
+        .map_err(|e| CommandError::internal_error("Create plugin directory", e))?;
+
+    // Download and install
+    let installed_path = marketplace
+        .download_plugin(&plugin_id, &plugin_dir)
+        .map_err(|e| CommandError::internal_error("Download plugin", e))?;
+
+    // Get plugin info
+    let plugin = marketplace
+        .get_plugin(&plugin_id)
+        .ok_or_else(|| CommandError::invalid_input("plugin_id", "Plugin not found"))?;
+
+    // Reload plugin registry
+    let mut registry = state
+        .plugin_registry
+        .lock()
+        .map_err(|e| CommandError::internal_error("Lock plugin registry", e.to_string()))?;
+
+    let _ = registry.scan_directory(&plugin_dir);
+
+    Ok(serde_json::json!({
+        "id": plugin.id,
+        "name": plugin.name,
+        "status": "installed",
+        "path": installed_path.to_string_lossy(),
+    }))
+}
+
+/// Uninstall a plugin
+#[tauri::command]
+pub fn uninstall_plugin(
+    state: State<AppState>,
+    plugin_id: String,
+) -> Result<(), CommandError> {
+    let plugin_dir = dirs::data_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join("openclaw-photo-studio")
+        .join("plugins")
+        .join(&plugin_id);
+
+    if plugin_dir.exists() {
+        std::fs::remove_dir_all(&plugin_dir)
+            .map_err(|e| CommandError::internal_error("Remove plugin directory", e))?;
+    }
+
+    // Reload plugin registry
+    let mut registry = state
+        .plugin_registry
+        .lock()
+        .map_err(|e| CommandError::internal_error("Lock plugin registry", e.to_string()))?;
+
+    let scan_dir = dirs::data_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join("openclaw-photo-studio")
+        .join("plugins");
+
+    let _ = registry.scan_directory(&scan_dir);
+
+    Ok(())
+}
+
+// ===== HDR & PANORAMA =====
+
+/// Merge multiple photos into HDR using exposure fusion
+#[tauri::command]
+pub fn merge_hdr_photos(
+    state: State<AppState>,
+    photo_ids: Vec<String>,
+    settings: serde_json::Value,
+) -> Result<serde_json::Value, CommandError> {
+    // Lock catalog
+    let catalog_guard = state
+        .catalog
+        .lock()
+        .map_err(|e| CommandError::internal_error("Lock catalog", e.to_string()))?;
+
+    let catalog = catalog_guard
+        .as_ref()
+        .ok_or_else(CommandError::catalog_not_open)?;
+
+    if photo_ids.is_empty() {
+        return Err(CommandError::invalid_input(
+            "photo_ids",
+            "At least one photo required",
+        ));
+    }
+
+    // Parse settings
+    let deghosting = settings
+        .get("deghosting")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.0) as f32;
+    let auto_align = settings
+        .get("auto_align")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    let hdr_settings = ocps_core::hdr::HdrMergeSettings {
+        deghosting,
+        auto_align,
+        base_exposure_index: 0,
+    };
+
+    // Load all photos and their exposures
+    let mut exposures = Vec::new();
+
+    for (idx, photo_id) in photo_ids.iter().enumerate() {
+        // Get photo metadata
+        let photo = catalog
+            .get_photo(photo_id)
+            .map_err(|e| CommandError::catalog_error("Get photo", e))?
+            .ok_or_else(|| CommandError::file_not_found(photo_id))?;
+
+        // Decode RAW
+        let raw_data = ocps_core::raw::decode(std::path::Path::new(&photo.file_path))
+            .map_err(|e| CommandError::internal_error("Decode RAW", e))?;
+
+        // Demosaic
+        let demosaiced = ocps_core::demosaic(&raw_data, ocps_core::DemosaicAlgorithm::Bilinear);
+
+        // Convert u8 to u16 for pipeline
+        let data_u16: Vec<u16> = demosaiced
+            .data
+            .iter()
+            .map(|&v| (v as u16) * 257)
+            .collect();
+
+        let image = ocps_core::pipeline::types::RgbImage16::from_data(
+            demosaiced.width,
+            demosaiced.height,
+            data_u16,
+        );
+
+        // Use index-based EV offset (assume images are sorted darkest to brightest)
+        // In production, would read from EXIF ExposureBiasValue
+        let ev_offset = (idx as f32) - (photo_ids.len() / 2) as f32;
+
+        exposures.push((image, ev_offset));
+    }
+
+    // Sort exposures by EV (darkest to brightest)
+    exposures.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+
+    // Merge HDR
+    let result = ocps_core::hdr::merge_hdr(&exposures, &hdr_settings)
+        .map_err(|e| CommandError::internal_error("HDR merge", e))?;
+
+    // Create a new virtual photo in catalog
+    let result_id = uuid::Uuid::new_v4().to_string();
+
+    // For now, return metadata about the result
+    // In production, would save to catalog as virtual photo
+    Ok(serde_json::json!({
+        "result_photo_id": result_id,
+        "ev_range": result.ev_range,
+        "width": result.image.width,
+        "height": result.image.height,
+        "source_count": photo_ids.len(),
+    }))
 }

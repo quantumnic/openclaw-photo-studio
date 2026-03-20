@@ -1,6 +1,6 @@
 [package]
 name = "ocps-catalog"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2021"
 description = "OpenClaw Photo Studio — Catalog Engine (SQLite, search, collections)"
 license = "LicenseRef-PolyForm-Noncommercial-1.0.0"
@@ -16,6 +16,7 @@ log = { workspace = true }
 rusqlite = { version = "0.31", features = ["bundled", "backup"] }
 walkdir = "2"
 sha2 = "0.10"
+rayon = "1.10"
 
 [dev-dependencies]
 tempfile = "3"

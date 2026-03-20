@@ -1,6 +1,6 @@
 [package]
 name = "ocps-plugin-host"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2021"
 description = "OpenClaw Photo Studio — WASM plugin host"
 license = "LicenseRef-PolyForm-Noncommercial-1.0.0"
@@ -13,7 +13,22 @@ anyhow = { workspace = true }
 log = { workspace = true }
 toml = "0.8"
 wasmtime = { version = "25", default-features = false, features = ["runtime", "cranelift"] }
+wat = "1"
+
+# Optional AI features
+ort = { version = "2.0.0-rc.12", optional = true }
+
+# Optional tethering
+gphoto2 = { version = "0.3", optional = true }
+
+# Image processing for face detection
+imageproc = "0.25"
+image = { version = "0.25", default-features = false }
+
+[features]
+default = []
+ai = ["dep:ort"]
+gphoto2-tether = ["dep:gphoto2"]
 
 [dev-dependencies]
 uuid = { workspace = true }
-wat = "1"

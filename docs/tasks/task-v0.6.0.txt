@@ -1,0 +1,327 @@
+## Task: v0.6.0 — Plugin SDK v1.0, Marketplace, HDR Merge, Panorama Prep
+
+Read docs/concept/CONCEPT.md section 9 (Plugin System) first.
+You are on the "develop" branch. Stay on develop — do NOT push to main.
+Run: git checkout develop && git pull first.
+
+### PART A: Plugin API v1.0 (Stable)
+
+The plugin host has wasmtime. Now define the stable Plugin API contract.
+
+Create crates/ocps-plugin-host/src/api.rs:
+
+This is the API surface that plugin authors use.
+Version 1 — must remain stable forever once released.
+
+```rust
+/// Plugin API version. Bump on breaking changes.
+pub const PLUGIN_API_VERSION: u32 = 1;
+
+/// Functions that the host provides to plugins (via WASM imports)
+/// All functions use i32/f32/i64 (WASM primitive types)
+pub mod host_functions {
+    // Logging
+    // import: env.ocps_log(msg_ptr: i32, msg_len: i32)
+    
+    // Image access (when plugin has read_image permission)
+    // import: env.ocps_get_image_width() -> i32
+    // import: env.ocps_get_image_height() -> i32
+    // import: env.ocps_get_pixel(x: i32, y: i32, channel: i32) -> f32  (0.0-1.0)
+    // import: env.ocps_set_pixel(x: i32, y: i32, channel: i32, value: f32)
+    
+    // Metadata (when plugin has read_metadata permission)
+    // import: env.ocps_get_metadata(key_ptr: i32, key_len: i32, out_ptr: i32, out_max: i32) -> i32
+    // Returns: bytes written, or -1 if key not found
+    
+    // UI (always available)
+    // import: env.ocps_show_progress(current: i32, total: i32)
+    // import: env.ocps_show_message(msg_ptr: i32, msg_len: i32)
+}
+
+/// Functions that plugins must export
+pub mod plugin_exports {
+    // Required:
+    // export: plugin_init() -> i32  (0 = success)
+    // export: plugin_info(out_ptr: i32) -> i32  (writes JSON, returns len)
+    
+    // Optional (depends on plugin type):
+    // export: process_image(width: i32, height: i32) -> i32  (for image filters)
+    // export: get_parameters(out_ptr: i32) -> i32  (JSON parameter schema)
+    // export: on_photo_selected(photo_id_ptr: i32, photo_id_len: i32)  (for UI plugins)
+}
+```
+
+Create crates/ocps-plugin-host/src/sdk.rs:
+
+Generate a plugin SDK header/template that plugin authors can use.
+
+pub fn generate_rust_template() -> String
+// Returns a Rust source file template for a plugin:
+// - Imports for all host functions
+// - Boilerplate plugin_init and plugin_info
+// - Example process_image implementation
+// - README instructions
+
+pub fn generate_wat_template() -> String  
+// Same but in WAT (WebAssembly Text Format) for minimal plugins
+
+Tests:
+- test_sdk_rust_template_compiles: generate template, verify it's valid UTF-8 with expected sections
+- test_sdk_wat_template_valid: generate WAT, compile with wat crate, verify no errors
+- test_api_version_is_1: verify PLUGIN_API_VERSION == 1
+
+### PART B: Plugin Marketplace Foundation
+
+Create a simple plugin registry/marketplace system.
+
+Create crates/ocps-plugin-host/src/marketplace.rs:
+
+pub struct MarketplacePlugin {
+    pub id: String,
+    pub name: String,
+    pub version: String,
+    pub description: String,
+    pub author: String,
+    pub download_url: String,
+    pub checksum_sha256: String,
+    pub api_version: u32,
+    pub plugin_type: String,
+    pub downloads: u64,
+    pub rating: f32,
+}
+
+pub struct Marketplace {
+    pub base_url: String,
+    pub plugins: Vec<MarketplacePlugin>,
+}
+
+impl Marketplace {
+    pub fn new() -> Self {
+        // Default to the official marketplace (can be overridden)
+        Self {
+            base_url: "https://marketplace.openclaw.photo/api/v1".into(),
+            plugins: vec![],
+        }
+    }
+    
+    // Fetch plugin list (in real life: HTTP GET to base_url/plugins)
+    // For now: return hardcoded demo plugins
+    pub fn fetch_plugins(&mut self) -> Result<usize, MarketplaceError> {
+        // Demo plugins (simulate what marketplace would return)
+        self.plugins = vec![
+            MarketplacePlugin {
+                id: "community.lut-loader".into(),
+                name: "LUT Loader".into(),
+                version: "1.0.0".into(),
+                description: "Load and apply .cube LUT files".into(),
+                author: "Community".into(),
+                download_url: "https://marketplace.openclaw.photo/plugins/lut-loader-1.0.0.wasm".into(),
+                checksum_sha256: "abc123".into(),
+                api_version: 1,
+                plugin_type: "image_filter".into(),
+                downloads: 1234,
+                rating: 4.7,
+            },
+            MarketplacePlugin {
+                id: "community.flickr-upload".into(),
+                name: "Flickr Upload".into(),
+                version: "2.1.0".into(),
+                description: "Export photos directly to Flickr".into(),
+                author: "Community".into(),
+                download_url: "https://marketplace.openclaw.photo/plugins/flickr-2.1.0.wasm".into(),
+                checksum_sha256: "def456".into(),
+                api_version: 1,
+                plugin_type: "integration".into(),
+                downloads: 5678,
+                rating: 4.2,
+            },
+            MarketplacePlugin {
+                id: "community.ai-denoise".into(),
+                name: "AI Denoise".into(),
+                version: "1.2.0".into(),
+                description: "ML-based noise reduction (ONNX)".into(),
+                author: "Community".into(),
+                download_url: "https://marketplace.openclaw.photo/plugins/ai-denoise-1.2.0.wasm".into(),
+                checksum_sha256: "ghi789".into(),
+                api_version: 1,
+                plugin_type: "ai_ml".into(),
+                downloads: 9876,
+                rating: 4.9,
+            },
+        ];
+        Ok(self.plugins.len())
+    }
+    
+    pub fn search(&self, query: &str) -> Vec<&MarketplacePlugin> {
+        self.plugins.iter()
+            .filter(|p| p.name.to_lowercase().contains(&query.to_lowercase())
+                     || p.description.to_lowercase().contains(&query.to_lowercase()))
+            .collect()
+    }
+    
+    // Simulate download (in real life: HTTP download + verify checksum)
+    pub fn download_plugin(&self, plugin_id: &str, target_dir: &Path) -> Result<PathBuf, MarketplaceError> {
+        // For now: create a stub WASM file
+        // In production: download from download_url, verify sha256, save
+        let plugin = self.plugins.iter().find(|p| p.id == plugin_id)
+            .ok_or(MarketplaceError::NotFound(plugin_id.to_string()))?;
+        
+        // Create stub plugin directory
+        let plugin_dir = target_dir.join(&plugin.id);
+        std::fs::create_dir_all(&plugin_dir)?;
+        
+        // Write plugin.toml manifest
+        std::fs::write(plugin_dir.join("plugin.toml"), format!(
+            "[plugin]\nname = \"{}\"\nversion = \"{}\"\napi_version = \"1\"\ntype = \"{}\"\ndescription = \"{}\"\nauthor = \"{}\"\nentry_point = \"plugin.wasm\"\n\n[permissions]\nread_image = true\nwrite_image = true\nnetwork = false\n",
+            plugin.name, plugin.version, plugin.plugin_type, plugin.description, plugin.author
+        ))?;
+        
+        // Write stub WASM (empty but valid)
+        let stub_wat = "(module (func (export \"plugin_init\") (result i32) (i32.const 0)))";
+        let wasm_bytes = wat::parse_str(stub_wat).map_err(|e| MarketplaceError::InvalidPlugin(e.to_string()))?;
+        std::fs::write(plugin_dir.join("plugin.wasm"), wasm_bytes)?;
+        
+        Ok(plugin_dir)
+    }
+}
+
+Tests:
+- test_marketplace_fetch_demo_plugins: fetch returns >= 3 plugins
+- test_marketplace_search: search "denoise" finds ai-denoise plugin
+- test_marketplace_download_creates_directory: download lut-loader, verify dir + plugin.toml created
+
+Add Tauri commands:
+- get_marketplace_plugins() -> Result<Vec<serde_json::Value>, CommandError>
+- search_marketplace(query: String) -> Result<Vec<serde_json::Value>, CommandError>
+- install_plugin(plugin_id: String) -> Result<serde_json::Value, CommandError>
+  Downloads + loads plugin, returns { id, name, status: "installed" }
+- uninstall_plugin(plugin_id: String) -> Result<(), CommandError>
+
+Add Plugin Manager UI in app/src:
+Create app/src/components/plugins/PluginManager.tsx:
+- Tab: "Installed" (from registry scan)
+- Tab: "Marketplace" (from marketplace)
+- Each plugin card: name, description, author, rating, install/uninstall button
+- Search bar at top
+- Accessible via Command Palette: "Manage Plugins"
+
+### PART C: HDR Merge
+
+Implement HDR merge as a built-in feature (not plugin).
+
+Create crates/ocps-core/src/hdr/mod.rs:
+
+pub struct HdrMergeSettings {
+    pub deghosting: f32,        // 0.0 (none) to 1.0 (aggressive)
+    pub auto_align: bool,
+    pub base_exposure_index: usize,  // which input to use as base
+}
+
+pub struct HdrResult {
+    pub image: RgbImage16,
+    pub ev_range: f32,          // total exposure range (e.g., 6.0 EV)
+    pub ghost_map: Option<Vec<f32>>,  // per-pixel ghosting probability
+}
+
+pub fn merge_hdr(
+    exposures: &[(RgbImage16, f32)],  // (image, ev_offset)
+    settings: &HdrMergeSettings,
+) -> Result<HdrResult, HdrError>
+
+Implementation approach (Mertens exposure fusion — simpler than true HDR):
+1. For each input image, compute: contrast, saturation, well-exposedness weights
+   - Contrast: Laplacian magnitude at each pixel
+   - Saturation: standard deviation of RGB channels
+   - Well-exposedness: Gaussian centered at 0.5 (mid-tone preferred)
+2. Compute per-level Gaussian pyramids for each image
+3. Compute Laplacian pyramids for each image
+4. Blend pyramids using normalized weight pyramids
+5. Reconstruct final image from blended Laplacian pyramid
+
+For auto-align: use a simplified approach
+   - Compute rough alignment via phase correlation on luminance channel
+   - Apply integer pixel offset (subpixel alignment is complex, skip for now)
+
+Tests:
+- test_hdr_merge_single_image: merge with 1 image -> same image back
+- test_hdr_merge_two_exposures: merge bright and dark exposure, result has detail in both shadows and highlights
+  Verify: merged image has higher variance in both shadows (< 0.3) and highlights (> 0.7) than either input alone
+- test_hdr_merge_zero_exposures: returns error
+
+Add Tauri command:
+pub fn merge_hdr_photos(
+    state: State<AppState>,
+    photo_ids: Vec<String>,
+    settings: serde_json::Value,
+) -> Result<serde_json::Value, CommandError>
+// 1. Load + decode all photos
+// 2. Read EV offsets from EXIF (Exposure Bias Value)
+// 3. Call merge_hdr
+// 4. Save result as new virtual photo in catalog
+// 5. Return { result_photo_id, ev_range }
+
+Add UI: "Merge to HDR" option in right-click context menu when 2+ photos selected.
+
+### PART D: Panorama Merge (Foundation)
+
+Implement the foundation for panorama stitching.
+Full stitching is complex — implement the preprocessing and a basic projection.
+
+Create crates/ocps-core/src/panorama/mod.rs:
+
+pub struct PanoramaSettings {
+    pub projection: ProjectionType,
+    pub overlap_percent: f32,   // expected overlap between shots
+    pub blend_width: u32,       // pixels for seam blending
+}
+
+pub enum ProjectionType {
+    Cylindrical,
+    Spherical,
+    Perspective,
+}
+
+pub struct PanoramaResult {
+    pub image: RgbImage16,
+    pub stitch_map: Vec<(usize, f32, f32)>,  // (source_index, x_offset, y_offset)
+}
+
+pub fn stitch_panorama(
+    images: &[RgbImage16],
+    settings: &PanoramaSettings,
+) -> Result<PanoramaResult, PanoramaError>
+
+Simple implementation:
+1. For each pair of adjacent images: find offset using phase correlation
+2. Lay images side by side with computed offsets
+3. Alpha blend at seams (linear blend over blend_width pixels)
+4. Return combined image
+
+Tests:
+- test_panorama_single_image: stitch 1 image -> same image
+- test_panorama_two_identical: stitch 2 identical images -> result has twice the width (overlap detected)
+- test_panorama_blend_seam: verify seam region is smooth (no hard edge)
+
+### PART E: MANDATORY
+
+cargo clean if disk < 5GB.
+cargo test --all — must pass.
+cargo clippy --all — clean.
+Target: >330 tests.
+
+### PART F: Commits and Push (develop branch!)
+
+git checkout develop
+
+Git config: user.name="Quantum Nic", user.email="quantumnic@users.noreply.github.com"
+
+Four commits:
+1. "feat(plugin-sdk): Plugin API v1.0, SDK templates, marketplace with demo plugins"
+2. "feat(plugins): Plugin Manager UI with install/uninstall"
+3. "feat(hdr): HDR merge via Mertens exposure fusion"
+4. "feat(panorama): panorama stitching foundation with seam blending"
+
+Push to origin develop.
+
+When completely finished, run:
+openclaw system event --text "Done: v0.6.0 dev — Plugin SDK v1.0, Marketplace, HDR Merge, Panorama — Tests gruen, develop gepusht" --mode now

@@ -3,10 +3,11 @@
 use crate::models::{ImportResult, PhotoFilter, PhotoRecord, SortOrder};
 use anyhow::Result;
 use chrono::Utc;
+use rayon::prelude::*;
 use rusqlite::{params, Connection, Row};
 use sha2::{Digest, Sha256};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use uuid::Uuid;
 use walkdir::WalkDir;
 
@@ -101,6 +102,156 @@ impl Catalog {
                             result.errors.push(format!("{}: {}", path.display(), e));
                         }
                     }
+                }
+            }
+        }
+
+        Ok(result)
+    }
+
+    /// Import photos from a folder in parallel using rayon
+    ///
+    /// Significantly faster than sequential import for large batches.
+    /// EXIF extraction happens in parallel, DB inserts are sequential (SQLite limitation).
+    pub fn import_folder_parallel(&self, folder_path: &Path) -> Result<ImportResult> {
+        let supported_extensions = [
+            "arw", "nef", "raf", "dng", "cr2", "cr3", "orf", "rw2", "jpg", "jpeg", "tiff", "tif",
+            "png",
+        ];
+
+        // Step 1: Walk directory and collect all file paths
+        let files: Vec<PathBuf> = WalkDir::new(folder_path)
+            .follow_links(false)
+            .into_iter()
+            .filter_map(|e| e.ok())
+            .filter(|entry| {
+                let path = entry.path();
+                if !path.is_file() {
+                    return false;
+                }
+                if let Some(ext) = path.extension() {
+                    let ext_str = ext.to_string_lossy().to_lowercase();
+                    supported_extensions.contains(&ext_str.as_str())
+                } else {
+                    false
+                }
+            })
+            .map(|e| e.path().to_owned())
+            .collect();
+
+        // Step 2: Extract metadata in parallel using rayon
+        let metadata: Vec<(PathBuf, Result<PhotoMetadata>)> = files
+            .par_iter()
+            .map(|path| {
+                let meta = Self::extract_photo_metadata(path);
+                (path.clone(), meta)
+            })
+            .collect();
+
+        // Step 3: Insert into DB sequentially (SQLite doesn't handle parallel writes well)
+        let mut result = ImportResult {
+            total: metadata.len() as u32,
+            inserted: 0,
+            skipped: 0,
+            errors: Vec::new(),
+        };
+
+        for (path, meta) in metadata {
+            match meta {
+                Ok(meta) => match self.insert_photo_with_metadata(&path, &meta) {
+                    Ok(inserted) => {
+                        if inserted {
+                            result.inserted += 1;
+                        } else {
+                            result.skipped += 1;
+                        }
+                    }
+                    Err(e) => {
+                        result.errors.push(format!("{}: {}", path.display(), e));
+                    }
+                },
+                Err(e) => {
+                    result.errors.push(format!("{}: {}", path.display(), e));
+                }
+            }
+        }
+
+        Ok(result)
+    }
+
+    /// Import with progress callback
+    pub fn import_folder_with_progress<F>(
+        &self,
+        folder_path: &Path,
+        on_progress: F,
+    ) -> Result<ImportResult>
+    where
+        F: Fn(u32, u32) + Send + Sync,
+    {
+        let supported_extensions = [
+            "arw", "nef", "raf", "dng", "cr2", "cr3", "orf", "rw2", "jpg", "jpeg", "tiff", "tif",
+            "png",
+        ];
+
+        // Collect files
+        let files: Vec<PathBuf> = WalkDir::new(folder_path)
+            .follow_links(false)
+            .into_iter()
+            .filter_map(|e| e.ok())
+            .filter(|entry| {
+                let path = entry.path();
+                if !path.is_file() {
+                    return false;
+                }
+                if let Some(ext) = path.extension() {
+                    let ext_str = ext.to_string_lossy().to_lowercase();
+                    supported_extensions.contains(&ext_str.as_str())
+                } else {
+                    false
+                }
+            })
+            .map(|e| e.path().to_owned())
+            .collect();
+
+        let total = files.len() as u32;
+
+        // Extract metadata in parallel
+        let metadata: Vec<(PathBuf, Result<PhotoMetadata>)> = files
+            .par_iter()
+            .map(|path| {
+                let meta = Self::extract_photo_metadata(path);
+                (path.clone(), meta)
+            })
+            .collect();
+
+        // Insert sequentially with progress updates
+        let mut result = ImportResult {
+            total,
+            inserted: 0,
+            skipped: 0,
+            errors: Vec::new(),
+        };
+
+        let mut current = 0u32;
+        for (path, meta) in metadata {
+            current += 1;
+            on_progress(current, total);
+
+            match meta {
+                Ok(meta) => match self.insert_photo_with_metadata(&path, &meta) {
+                    Ok(inserted) => {
+                        if inserted {
+                            result.inserted += 1;
+                        } else {
+                            result.skipped += 1;
+                        }
+                    }
+                    Err(e) => {
+                        result.errors.push(format!("{}: {}", path.display(), e));
+                    }
+                },
+                Err(e) => {
+                    result.errors.push(format!("{}: {}", path.display(), e));
                 }
             }
         }
@@ -957,6 +1108,181 @@ pub struct SmartRule {
 pub struct SmartCollectionRules {
     pub match_all: bool,
     pub rules: Vec<SmartRule>,
+}
+
+/// Photo metadata extracted during parallel import
+struct PhotoMetadata {
+    file_name: String,
+    file_size: u64,
+    file_hash: String,
+    mime_type: String,
+}
+
+impl Catalog {
+    /// Extract photo metadata (static method for parallel processing)
+    fn extract_photo_metadata(path: &Path) -> Result<PhotoMetadata> {
+        // Get file metadata
+        let metadata = fs::metadata(path)?;
+        let file_size = metadata.len();
+
+        // Calculate file hash
+        let data = fs::read(path)?;
+        let mut hasher = Sha256::new();
+        hasher.update(&data);
+        let hash = hasher.finalize();
+        let file_hash = format!("{:x}", hash);
+
+        // Get file name
+        let file_name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown")
+            .to_string();
+
+        // Determine MIME type
+        let mime_type = if let Some(ext) = path.extension() {
+            let ext_str = ext.to_string_lossy().to_lowercase();
+            match ext_str.as_str() {
+                "arw" => "image/x-sony-arw",
+                "nef" => "image/x-nikon-nef",
+                "raf" => "image/x-fuji-raf",
+                "dng" => "image/x-adobe-dng",
+                "cr2" => "image/x-canon-cr2",
+                "cr3" => "image/x-canon-cr3",
+                "orf" => "image/x-olympus-orf",
+                "rw2" => "image/x-panasonic-rw2",
+                "jpg" | "jpeg" => "image/jpeg",
+                "tiff" | "tif" => "image/tiff",
+                "png" => "image/png",
+                _ => "application/octet-stream",
+            }
+            .to_string()
+        } else {
+            "application/octet-stream".to_string()
+        };
+
+        Ok(PhotoMetadata {
+            file_name,
+            file_size,
+            file_hash,
+            mime_type,
+        })
+    }
+
+    /// Insert photo with pre-extracted metadata
+    fn insert_photo_with_metadata(&self, path: &Path, meta: &PhotoMetadata) -> Result<bool> {
+        // Check if already imported
+        let path_str = path.to_string_lossy().to_string();
+        let exists: bool = self
+            .conn
+            .query_row(
+                "SELECT 1 FROM photos WHERE file_path = ? LIMIT 1",
+                params![&path_str],
+                |_| Ok(true),
+            )
+            .unwrap_or(false);
+
+        if exists {
+            return Ok(false); // skipped
+        }
+
+        // Generate UUID
+        let id = Uuid::new_v4().to_string();
+
+        // Current timestamp
+        let now = Utc::now().to_rfc3339();
+
+        // Insert into database
+        self.conn.execute(
+            r#"
+            INSERT INTO photos (
+                id, file_path, file_name, file_size, file_hash, mime_type,
+                date_imported, rating, color_label, flag
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 'none', 'none')
+            "#,
+            params![
+                &id,
+                &path_str,
+                &meta.file_name,
+                &meta.file_size,
+                &meta.file_hash,
+                &meta.mime_type,
+                &now
+            ],
+        )?;
+
+        Ok(true) // inserted
+    }
+
+    /// Find duplicate photos by file hash
+    pub fn find_duplicates(&self) -> Result<Vec<Vec<String>>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, file_hash FROM photos
+             WHERE file_hash IN (
+                 SELECT file_hash FROM photos
+                 GROUP BY file_hash
+                 HAVING COUNT(*) > 1
+             )
+             ORDER BY file_hash",
+        )?;
+
+        let mut duplicates: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+
+        for row in rows {
+            let (id, hash) = row?;
+            duplicates.entry(hash).or_default().push(id);
+        }
+
+        Ok(duplicates.into_values().collect())
+    }
+
+    /// Find near-duplicates based on EXIF similarity
+    ///
+    /// Near-duplicates are photos with:
+    /// - Same camera model
+    /// - Date within 1 second
+    /// - File size within 10%
+    pub fn find_near_duplicates(&self, _threshold: f32) -> Result<Vec<(String, String, f32)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT a.id, b.id, a.camera_model, a.date_taken, a.file_size, b.file_size
+             FROM photos a
+             JOIN photos b ON a.id < b.id
+                 AND a.camera_model = b.camera_model
+                 AND a.camera_model IS NOT NULL
+                 AND ABS(CAST(strftime('%s', a.date_taken) AS INTEGER) -
+                         CAST(strftime('%s', b.date_taken) AS INTEGER)) <= 1
+             WHERE a.date_taken IS NOT NULL
+                 AND b.date_taken IS NOT NULL",
+        )?;
+
+        let mut results = Vec::new();
+
+        let rows = stmt.query_map([], |row| {
+            let id1: String = row.get(0)?;
+            let id2: String = row.get(1)?;
+            let size1: i64 = row.get(4)?;
+            let size2: i64 = row.get(5)?;
+
+            // Calculate size similarity
+            let size_diff = ((size1 - size2).abs() as f32) / (size1.max(size2) as f32);
+
+            Ok((id1, id2, 1.0 - size_diff))
+        })?;
+
+        for row in rows {
+            let (id1, id2, similarity) = row?;
+            // Only include if size within 10%
+            if similarity >= 0.9 {
+                results.push((id1, id2, similarity));
+            }
+        }
+
+        Ok(results)
+    }
 }
 
 #[cfg(test)]

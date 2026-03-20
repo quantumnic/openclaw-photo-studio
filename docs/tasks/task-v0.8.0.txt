@@ -1,0 +1,354 @@
+## Task: v0.8.0 — Merge develop into main, v1.0 RC prep, Website assets, Final Polish
+
+Current branch: develop. Latest: bc00247.
+Run git pull on develop first!
+
+### PART A: Merge develop into main + version bump
+
+First: merge all develop work into main.
+
+git checkout main
+git merge develop --no-ff -m "chore: merge develop into main for v0.8.0"
+git push origin main
+
+Then create v0.8.0 tag:
+- Update CHANGELOG.md with everything since v0.4.0
+- Bump version to 0.8.0 in Cargo.toml workspace + app/src-tauri/tauri.conf.json
+- Commit: "chore: v0.8.0 — merge develop, 340+ tests, full feature set"
+- git tag v0.8.0 -m "v0.8.0 - Plugin SDK, AI, GPU pipeline, tethering, 340+ tests"
+- git push origin v0.8.0
+
+### PART B: Semantic Search (natural language photo search)
+
+Add basic semantic search to the library.
+
+In crates/ocps-catalog/src/search.rs:
+
+pub struct SemanticSearchQuery {
+    pub text: String,           // "sunset beach photos from 2025"
+    pub parsed: ParsedQuery,
+}
+
+pub struct ParsedQuery {
+    pub keywords: Vec<String>,
+    pub date_filter: Option<DateFilter>,
+    pub rating_filter: Option<u8>,
+    pub camera_filter: Option<String>,
+    pub location_filter: Option<String>,
+    pub flag_filter: Option<String>,
+}
+
+pub fn parse_natural_query(query: &str) -> ParsedQuery {
+    // Simple NLP-free parsing using heuristics:
+    // "from 2025" / "in 2025" -> DateFilter::Year(2025)
+    // "this year" -> DateFilter::ThisYear
+    // "last month" -> DateFilter::LastMonth
+    // "rated 4+" / "4 stars" -> rating_filter = 4
+    // "picks" / "flagged" -> flag_filter = "pick"
+    // "sony" / "nikon" / "canon" -> camera_filter
+    // "paris" / "london" -> location_filter (search gps_city)
+    // everything else -> keywords (search FTS)
+    
+    let mut parsed = ParsedQuery::default();
+    let lower = query.to_lowercase();
+    
+    // Date patterns
+    if let Some(year) = extract_year(&lower) {
+        parsed.date_filter = Some(DateFilter::Year(year));
+    }
+    if lower.contains("this year") {
+        parsed.date_filter = Some(DateFilter::ThisYear);
+    }
+    if lower.contains("last month") {
+        parsed.date_filter = Some(DateFilter::LastMonth);
+    }
+    if lower.contains("today") {
+        parsed.date_filter = Some(DateFilter::Today);
+    }
+    
+    // Rating patterns
+    if let Some(r) = extract_rating(&lower) {
+        parsed.rating_filter = Some(r);
+    }
+    if lower.contains("picks") || lower.contains("flagged") {
+        parsed.flag_filter = Some("pick".to_string());
+    }
+    if lower.contains("rejected") {
+        parsed.flag_filter = Some("reject".to_string());
+    }
+    
+    // Camera patterns
+    for brand in &["sony", "nikon", "canon", "fuji", "olympus", "panasonic", "leica"] {
+        if lower.contains(brand) {
+            parsed.camera_filter = Some(brand.to_string());
+            break;
+        }
+    }
+    
+    // Remaining words -> FTS keywords
+    parsed.keywords = extract_keywords(&lower);
+    
+    parsed
+}
+
+pub fn execute_semantic_search(
+    catalog: &Catalog,
+    query: &ParsedQuery,
+    limit: u32,
+) -> Result<Vec<PhotoRecord>, CatalogError>
+// Build SQL from parsed query components
+// Combine with AND logic
+
+Tests:
+- test_parse_year_filter: "photos from 2025" -> date_filter = Year(2025)
+- test_parse_rating_filter: "4 star photos" -> rating_filter = Some(4)
+- test_parse_camera_filter: "sony photos" -> camera_filter = Some("sony")
+- test_parse_picks: "my picks" -> flag_filter = Some("pick")
+- test_execute_search_returns_results: insert photos, search, verify results
+- test_semantic_search_combined: "sony picks from 2025" -> combined filters
+
+Update search in frontend:
+- The search input now uses semantic search
+- Show parsed query interpretation below search bar: "Showing: Sony cameras, flagged as Pick, from 2025"
+- This gives users feedback on what the query means
+
+### PART C: Export Queue with Retry
+
+Currently batch export is fire-and-forget.
+Add a proper export queue with status tracking.
+
+In crates/ocps-export/src/queue.rs:
+
+pub struct ExportJob {
+    pub id: String,
+    pub photo_id: String,
+    pub settings: ExportSettings,
+    pub output_path: PathBuf,
+    pub status: JobStatus,
+    pub retry_count: u32,
+    pub error: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub completed_at: Option<DateTime<Utc>>,
+}
+
+pub enum JobStatus {
+    Pending,
+    Running,
+    Completed,
+    Failed,
+    Cancelled,
+}
+
+pub struct ExportQueue {
+    jobs: VecDeque<ExportJob>,
+    active_job: Option<ExportJob>,
+    max_retries: u32,
+}
+
+impl ExportQueue {
+    pub fn enqueue(&mut self, job: ExportJob) -> String  // returns job id
+    pub fn cancel(&mut self, job_id: &str) -> bool
+    pub fn retry(&mut self, job_id: &str) -> bool
+    pub fn status(&self) -> QueueStatus
+    pub fn completed_jobs(&self) -> Vec<&ExportJob>
+    pub fn failed_jobs(&self) -> Vec<&ExportJob>
+}
+
+pub struct QueueStatus {
+    pub pending: u32,
+    pub completed: u32,
+    pub failed: u32,
+    pub is_running: bool,
+}
+
+Add ExportQueue to AppState.
+
+Tauri commands:
+- enqueue_exports(photo_ids: Vec<String>, settings: serde_json::Value) -> Result<Vec<String>, CommandError>
+  Returns job IDs
+- get_export_queue_status() -> Result<serde_json::Value, CommandError>
+- cancel_export_job(job_id: String) -> Result<bool, CommandError>
+- retry_failed_exports() -> Result<u32, CommandError>
+
+Add Export Queue panel to UI (bottom status bar area):
+Shows: "Export Queue: 12 pending, 3 done, 1 failed [Retry Failed]"
+Click to expand: show full job list with status.
+
+Tests:
+- test_queue_enqueue_and_status: enqueue 3, verify pending=3
+- test_queue_cancel: enqueue, cancel, verify cancelled
+- test_queue_status_counts: various statuses, verify counts accurate
+
+### PART D: Keyboard Shortcut Editor (full UI)
+
+Currently shortcuts are hardcoded. Build a full shortcut editor in Preferences.
+
+In Preferences panel (Keyboard section), show:
+- Full list of all shortcuts from DEFAULT_BINDINGS
+- Grouped by category (Navigation, Rating, Develop, etc.)
+- Each row: action description | current shortcut | [Edit] button
+- [Edit] button: enter "waiting for key" state, press any key combination
+- Conflict detection: if new key already used, show warning
+- [Reset to Default] button per row
+- [Reset All] button
+- Import/Export keymap as JSON file
+
+Create app/src/components/settings/ShortcutEditor.tsx:
+```tsx
+export function ShortcutEditor() {
+  const [bindings, setBindings] = createStore(loadBindings());
+  const [editingAction, setEditingAction] = createSignal<string | null>(null);
+  const [conflicts, setConflicts] = createSignal<Map<string, string[]>>(new Map());
+  
+  function startEdit(action: string) {
+    setEditingAction(action);
+    // Listen for next keydown event
+    const handler = (e: KeyboardEvent) => {
+      e.preventDefault();
+      const key = formatKeyCombo(e);
+      // Check for conflicts
+      const conflict = findConflict(key, action, bindings);
+      if (conflict) {
+        // Show conflict dialog
+      }
+      updateBinding(action, key);
+      setEditingAction(null);
+      document.removeEventListener("keydown", handler);
+    };
+    document.addEventListener("keydown", handler);
+  }
+  
+  function formatKeyCombo(e: KeyboardEvent): string {
+    const parts = [];
+    if (e.metaKey || e.ctrlKey) parts.push("cmd");
+    if (e.shiftKey) parts.push("shift");
+    if (e.altKey) parts.push("alt");
+    if (e.key !== "Meta" && e.key !== "Control" && e.key !== "Shift" && e.key !== "Alt") {
+      parts.push(e.key.toLowerCase());
+    }
+    return parts.join("+");
+  }
+  
+  // Show as table grouped by category
+  // Persist to localStorage on save
+}
+```
+
+Tests (JavaScript unit tests):
+- test_format_key_combo: Cmd+Shift+C -> "cmd+shift+c"
+- test_find_conflict: same key used twice -> conflict detected
+- test_reset_to_default: after edit, reset restores default
+
+### PART E: Welcome Screen polish + App icon
+
+Update the welcome screen (shown when no catalog open):
+
+Create a proper welcome screen at app/src/components/WelcomeScreen.tsx:
+```tsx
+export function WelcomeScreen(props: { onImportFolder: () => void; onOpenCatalog: () => void; recentCatalogs: string[] }) {
+  return (
+    <div class="h-full flex flex-col items-center justify-center bg-[#0f0f0f]">
+      {/* Logo */}
+      <div class="mb-8 text-center">
+        <div class="text-8xl mb-2">🌊</div>
+        <div class="text-2xl font-light text-[#ccc]">OpenClaw Photo Studio</div>
+        <div class="text-sm text-[#555] mt-1">v0.8.0 — source-available</div>
+      </div>
+      
+      {/* Actions */}
+      <div class="flex gap-4 mb-8">
+        <button onClick={props.onImportFolder} 
+          class="px-6 py-3 bg-[#4a9eff] text-white rounded-lg hover:bg-[#5aadff] font-medium">
+          📁 Import Folder
+        </button>
+        <button onClick={props.onOpenCatalog}
+          class="px-6 py-3 bg-[#2a2a2a] text-[#ccc] rounded-lg hover:bg-[#333] font-medium">
+          🗂️ Open Catalog
+        </button>
+      </div>
+      
+      {/* Recent */}
+      {props.recentCatalogs.length > 0 && (
+        <div class="w-80">
+          <div class="text-xs text-[#555] uppercase tracking-wider mb-2">Recent</div>
+          {props.recentCatalogs.map(path => (
+            <button class="w-full text-left px-3 py-2 rounded hover:bg-[#1a1a1a] text-sm text-[#888] truncate">
+              {path.split("/").pop()}
+              <span class="text-[#444] text-xs ml-2">{path}</span>
+            </button>
+          ))}
+        </div>
+      )}
+      
+      {/* Footer links */}
+      <div class="absolute bottom-6 flex gap-6 text-xs text-[#444]">
+        <a href="https://github.com/quantumnic/openclaw-photo-studio" target="_blank" class="hover:text-[#666]">
+          GitHub
+        </a>
+        <span>PolyForm Noncommercial</span>
+        <span>© 2026 OpenClaw Photo Studio Contributors</span>
+      </div>
+    </div>
+  );
+}
+```
+
+### PART F: Performance Audit
+
+Add performance tracking to identify bottlenecks.
+
+In Rust (app/src-tauri/src/perf.rs):
+```rust
+pub struct PerfTracker {
+    events: Vec<PerfEvent>,
+}
+
+pub struct PerfEvent {
+    pub label: String,
+    pub duration_ms: u64,
+    pub timestamp: std::time::SystemTime,
+}
+
+impl PerfTracker {
+    pub fn record<F, R>(label: &str, f: F) -> (R, u64)
+    where F: FnOnce() -> R
+    {
+        let start = std::time::Instant::now();
+        let result = f();
+        let elapsed = start.elapsed().as_millis() as u64;
+        (result, elapsed)
+    }
+}
+```
+
+Wrap key operations:
+- render_photo: track "decode", "pipeline", "encode" phases
+- import: track "scan", "exif", "insert" phases
+
+Add Tauri command: get_perf_stats() -> Vec<{label, avg_ms, count}>
+Show in Diagnostics panel.
+
+### PART G: MANDATORY
+
+cargo clean if disk < 5GB free.
+cargo test --all — must pass.
+cargo clippy --all — clean.
+Target: >360 tests.
+
+Stay on main branch for this task (it starts with merge from develop).
+
+### PART H: Commits and Push
+
+Git config: user.name="Quantum Nic", user.email="quantumnic@users.noreply.github.com"
+
+Five commits:
+1. "chore: merge develop -> main, v0.8.0 release"
+2. "feat(search): semantic search with natural language query parsing"
+3. "feat(export-queue): export job queue with retry and status tracking"
+4. "feat(ui): shortcut editor, welcome screen polish, perf tracking"
+5. "chore: v0.8.0 tag, CHANGELOG update"
+
+Create tag v0.8.0 and push to main + tag.
+
+When completely finished, run:
+openclaw system event --text "Done: v0.8.0 — Semantic Search, Export Queue, Shortcut Editor, Welcome Screen — Tests gruen, gepusht" --mode now
