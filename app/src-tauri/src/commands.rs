@@ -91,6 +91,8 @@ pub struct AppState {
     #[allow(dead_code)]
     pub render_cache: Mutex<crate::render::RenderCache>,
     pub tether_provider: Mutex<Box<dyn ocps_plugin_host::TetherProvider>>,
+    pub export_queue: Mutex<ocps_export::queue::ExportQueue>,
+    pub perf_tracker: crate::perf::PerfTracker,
 }
 
 impl AppState {
@@ -135,6 +137,8 @@ impl AppState {
             histories: Mutex::new(std::collections::HashMap::new()),
             render_cache: Mutex::new(crate::render::RenderCache::new(10)),
             tether_provider: Mutex::new(tether_provider),
+            export_queue: Mutex::new(ocps_export::queue::ExportQueue::new()),
+            perf_tracker: crate::perf::PerfTracker::new(),
         }
     }
 }
@@ -976,7 +980,7 @@ pub fn export_photos_batch(
             date_taken: photo.date_taken.clone(),
             camera_make: photo.camera_make.clone(),
             camera_model: photo.camera_model.clone(),
-            rating: photo.rating,
+            rating: photo.rating.unwrap_or(0),
         };
 
         let output_name = ocps_export::apply_naming_template(
@@ -2509,4 +2513,129 @@ pub fn merge_hdr_photos(
         "height": result.image.height,
         "source_count": photo_ids.len(),
     }))
+}
+
+// ============================================================================
+// Semantic Search Commands
+// ============================================================================
+
+#[tauri::command]
+pub fn semantic_search(
+    query: String,
+    limit: Option<u32>,
+    state: State<AppState>,
+) -> Result<serde_json::Value, CommandError> {
+    let catalog = state.catalog.lock().unwrap();
+    let catalog = catalog
+        .as_ref()
+        .ok_or_else(CommandError::catalog_not_open)?;
+
+    let parsed = ocps_catalog::search::parse_natural_query(&query);
+    let results = ocps_catalog::search::execute_semantic_search(catalog, &parsed, limit.unwrap_or(100))
+        .map_err(|e| CommandError::catalog_error("Semantic search", e))?;
+
+    Ok(serde_json::json!({
+        "query": query,
+        "parsed": {
+            "keywords": parsed.keywords,
+            "date_filter": parsed.date_filter,
+            "rating_filter": parsed.rating_filter,
+            "camera_filter": parsed.camera_filter,
+            "location_filter": parsed.location_filter,
+            "flag_filter": parsed.flag_filter,
+        },
+        "results": results,
+        "count": results.len(),
+    }))
+}
+
+// ============================================================================
+// Export Queue Commands
+// ============================================================================
+
+#[tauri::command]
+pub fn enqueue_exports(
+    photo_ids: Vec<String>,
+    settings: serde_json::Value,
+    state: State<AppState>,
+) -> Result<Vec<String>, CommandError> {
+    let mut queue = state.export_queue.lock().unwrap();
+    let mut job_ids = Vec::new();
+
+    for photo_id in photo_ids {
+        let job = ocps_export::queue::ExportJob {
+            id: uuid::Uuid::new_v4().to_string(),
+            photo_id: photo_id.clone(),
+            settings: settings.clone(),
+            output_path: std::path::PathBuf::from(format!("/tmp/{}.jpg", photo_id)),
+            status: ocps_export::queue::JobStatus::Pending,
+            retry_count: 0,
+            error: None,
+            created_at: chrono::Utc::now(),
+            completed_at: None,
+        };
+
+        let id = queue.enqueue(job);
+        job_ids.push(id);
+    }
+
+    Ok(job_ids)
+}
+
+#[tauri::command]
+pub fn get_export_queue_status(state: State<AppState>) -> Result<serde_json::Value, CommandError> {
+    let queue = state.export_queue.lock().unwrap();
+    let status = queue.status();
+
+    Ok(serde_json::to_value(&status).unwrap())
+}
+
+#[tauri::command]
+pub fn cancel_export_job(
+    job_id: String,
+    state: State<AppState>,
+) -> Result<bool, CommandError> {
+    let mut queue = state.export_queue.lock().unwrap();
+    queue
+        .cancel(&job_id)
+        .map_err(|e| CommandError::internal_error("Cancel export job", e))
+}
+
+#[tauri::command]
+pub fn retry_failed_exports(state: State<AppState>) -> Result<u32, CommandError> {
+    let mut queue = state.export_queue.lock().unwrap();
+    Ok(queue.retry_all_failed())
+}
+
+#[tauri::command]
+pub fn get_all_export_jobs(state: State<AppState>) -> Result<serde_json::Value, CommandError> {
+    let queue = state.export_queue.lock().unwrap();
+    let jobs = queue.all_jobs();
+
+    Ok(serde_json::to_value(&jobs).unwrap())
+}
+
+// ============================================================================
+// Performance Tracking Commands
+// ============================================================================
+
+#[tauri::command]
+pub fn get_perf_stats(state: State<AppState>) -> Result<serde_json::Value, CommandError> {
+    let stats = state.perf_tracker.get_stats();
+    Ok(serde_json::to_value(&stats).unwrap())
+}
+
+#[tauri::command]
+pub fn get_recent_perf_events(
+    limit: Option<usize>,
+    state: State<AppState>,
+) -> Result<serde_json::Value, CommandError> {
+    let events = state.perf_tracker.get_recent_events(limit.unwrap_or(50));
+    Ok(serde_json::to_value(&events).unwrap())
+}
+
+#[tauri::command]
+pub fn clear_perf_stats(state: State<AppState>) -> Result<(), CommandError> {
+    state.perf_tracker.clear();
+    Ok(())
 }

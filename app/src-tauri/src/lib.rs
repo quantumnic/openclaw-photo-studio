@@ -2,6 +2,7 @@ use tauri::Manager;
 
 mod commands;
 mod render;
+mod perf;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -75,6 +76,15 @@ pub fn run() {
             commands::install_plugin,
             commands::uninstall_plugin,
             commands::merge_hdr_photos,
+            commands::semantic_search,
+            commands::enqueue_exports,
+            commands::get_export_queue_status,
+            commands::cancel_export_job,
+            commands::retry_failed_exports,
+            commands::get_all_export_jobs,
+            commands::get_perf_stats,
+            commands::get_recent_perf_events,
+            commands::clear_perf_stats,
         ])
         .setup(|app| {
             #[cfg(debug_assertions)]
