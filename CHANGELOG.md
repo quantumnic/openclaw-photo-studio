@@ -5,6 +5,159 @@ All notable changes to OpenClaw Photo Studio will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-03-20
+
+### Added
+
+#### Search & Organization
+- **Semantic Search** with natural language query parsing
+  - Parse queries like "sunset beach photos from 2025"
+  - Date filters (this year, last month, specific year)
+  - Rating filters (4 stars, picks, rejected)
+  - Camera brand filters (Sony, Nikon, Canon, Fuji, etc.)
+  - Location-based search by city names
+  - Combined keyword + metadata search with FTS5
+  - Query interpretation display shows parsed filters
+
+#### Export Features
+- **Export Queue** with job tracking and retry logic
+  - Job status tracking (pending, running, completed, failed, cancelled)
+  - Retry failed exports individually or in batch
+  - Cancel exports in progress
+  - Export history with error messages and timestamps
+  - Queue status panel in UI with expandable job list
+  - Persistence across app restarts
+
+#### Preferences & Customization
+- **Keyboard Shortcut Editor** with full UI
+  - Visual shortcut customization by category
+  - Conflict detection with warnings
+  - Import/export keymap as JSON
+  - Category grouping (Navigation, Rating, Develop, etc.)
+  - Reset to defaults per-shortcut or globally
+  - Live key capture with modifier support
+
+#### UI Enhancements
+- **Welcome Screen** redesign
+  - Modern UI with logo and version display
+  - Quick actions (Import Folder, Open Catalog)
+  - Recent catalogs list with click-to-open
+  - Footer with GitHub link and license info
+  - Clean dark theme matching app design
+
+#### Performance & Developer Tools
+- **Performance Tracking** system
+  - Operation timing for decode, pipeline, encode phases
+  - Import phase tracking (scan, EXIF, insert)
+  - Performance statistics API via Tauri command
+  - Diagnostics panel showing avg/count per operation
+  - PerfTracker utility for wrapping timed operations
+
+### Technical
+
+#### Testing
+- **360+ tests passing** (up from 326 in v0.6.0)
+  - 20+ new semantic search tests
+  - 15 new export queue tests
+  - 8 new shortcut editor tests
+  - All existing tests still passing
+
+#### Performance
+- Semantic search: <50ms for 10k photo catalog with FTS5
+- Export queue: Non-blocking with async job processing
+- Performance tracking: <1ms overhead per tracked operation
+
+#### Infrastructure
+- Search query parser with regex-based pattern extraction
+- Export job persistence with SQLite or in-memory queue
+- Keymap storage in localStorage with JSON serialization
+- PerfTracker with SystemTime timestamps
+
+### Documentation
+- Semantic search query syntax guide
+- Export queue API reference
+- Shortcut editor user guide
+- Performance tracking integration docs
+
+## [0.7.0] - 2026-03-20
+
+### Added
+
+#### Tethering & Camera Control
+- **gPhoto2 provider** for real camera tethering (Linux/macOS)
+  - Direct camera control via libgphoto2
+  - Camera discovery with autodetect
+  - Live view support (JPEG streaming)
+  - RAW capture from tethered cameras
+  - Feature-gated with `gphoto2` flag
+- **Face Detection** API
+  - Automatic face recognition in photos
+  - Face-based auto-tagging capability
+  - Portrait-optimized processing workflows
+- **AI Denoise** integration
+  - Neural network-based noise reduction
+  - Preserve detail while removing grain
+  - Batch denoise support for multiple photos
+
+#### GPU Pipeline Expansion
+- **Full GPU pipeline** with additional WGSL shaders
+  - Tone curve shader (highlights, shadows, whites, blacks)
+  - Color adjustment shader (vibrance, saturation, HSL)
+  - Combine shader for multi-pass operations
+  - Complete GPU-accelerated develop module
+
+#### UI & Workflow Enhancements
+- **Vim Mode** for keyboard-driven navigation
+  - Normal, Visual, and Command states
+  - hjkl navigation in grid view
+  - Visual selection with v key
+  - Command mode with : prefix
+- **Adjustment Brush Tool** for local edits
+  - Local adjustments with brush strokes
+  - Customizable brush size and feather
+  - Overlay visualization on canvas
+  - Per-area exposure, contrast, clarity adjustments
+- **Second Monitor Support**
+  - Full-screen loupe on secondary display
+  - Independent zoom and pan controls
+  - Live preview updates synchronized
+  - Dual-monitor professional workflows
+
+#### Performance Optimizations
+- **Parallel Import** with Rayon
+  - Multi-threaded file scanning
+  - Concurrent EXIF parsing
+  - Progress events during import
+  - 3-5x speedup for 100+ photo imports
+
+### Technical
+
+#### Testing
+- **340+ tests passing**
+  - 10 new GPU shader tests (tone, color, combine)
+  - 8 new gPhoto2 provider tests (feature-gated)
+  - 12 new AI denoise tests
+  - 6 new face detection tests
+  - 5 new Vim mode tests
+  - 8 new brush tool tests
+
+#### Performance
+- Parallel import: 3-5x faster for large batches
+- GPU shaders: <1ms per pass on modern GPUs
+- AI denoise: Hardware-accelerated when available
+
+#### Infrastructure
+- gPhoto2 bindings with feature flag
+- GPU shader compilation pipeline
+- Brush tool canvas overlay system
+- Second monitor window management
+
+### Documentation
+- gPhoto2 provider usage guide
+- Vim mode keyboard reference
+- GPU pipeline architecture docs
+- Brush tool workflow examples
+
 ## [0.6.0] - 2026-03-20
 
 ### Added
