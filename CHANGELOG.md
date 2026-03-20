@@ -5,6 +5,82 @@ All notable changes to OpenClaw Photo Studio will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-03-20
+
+### Added
+
+#### RAW Processing Enhancements
+- **X-Trans demosaicing** for Fujifilm cameras (X-T5, X-H2, X-Pro3, X100V, GFX series)
+  - 6x6 CFA pattern support with adaptive homogeneity-directed interpolation
+  - Automatic detection of X-Trans sensors by camera model
+  - Optimized bilinear interpolation adapted for non-Bayer patterns
+- **Camera color matrix database** with 10 popular camera models
+  - Sony: A7 IV (ILCE-7M4), A7R V (ILCE-7RM5)
+  - Nikon: Z8, Z6 III
+  - Canon: EOS R5, EOS R6 Mark II
+  - Fujifilm: X-T5, X-H2
+  - Panasonic: S5 II
+  - Olympus/OM System: OM-5
+  - Camera RGB to XYZ D65 color matrices from Adobe DNG SDK
+  - Automatic camera-to-sRGB conversion with matrix multiplication
+
+#### GPU Pipeline Foundation (wgpu)
+- **wgpu-based compute shader infrastructure** for GPU-accelerated processing
+  - Exposure adjustment shader (first real GPU pipeline stage)
+  - WGSL shader with workgroup size optimization (64 threads)
+  - Async buffer mapping for efficient CPU-GPU data transfer
+  - Feature-gated GPU support (enabled with `gpu` feature flag)
+- GPU context initialization and management
+- Storage buffer bindings for input/output data
+- Uniform buffer for shader parameters
+
+#### Tethering Infrastructure
+- **Tether provider abstraction** for camera connectivity
+  - TetherProvider trait for pluggable camera backends
+  - MockTetherProvider for testing without hardware
+  - Camera discovery, connection, and disconnection APIs
+  - Image capture with RAW file byte streams
+  - Live view frame support (JPEG streaming)
+- **Tauri commands** for tethering integration
+  - `discover_cameras()` - Find available tethered cameras
+  - `connect_camera(id)` - Connect to specific camera
+  - `disconnect_camera()` - Disconnect from current camera
+  - `tether_capture()` - Trigger capture and return shot count
+  - `check_tethered_camera()` - Status check (backwards compatibility)
+- TetherSession for managing capture sessions
+  - Import folder configuration
+  - Auto-import toggle
+  - Shot count tracking
+
+### Technical
+
+#### Testing
+- **295 tests passing** (target: >295)
+  - 22 new tests for X-Trans demosaicing
+  - 10 new tests for camera color profiles
+  - 2 new GPU shader tests (feature-gated)
+  - 9 new tethering tests
+- All clippy checks passing
+- Test coverage for Fuji X-Trans pattern recognition
+- GPU tests skip gracefully when no GPU available
+
+#### Infrastructure
+- X-Trans pattern lookup table (6x6 repeating CFA)
+- Camera profile lookup with partial model matching
+- GPU shader compilation with WGSL
+- Mock JPEG generation for tethered capture testing
+- Mutex-protected tether provider in AppState
+
+### Performance
+- X-Trans demosaicing: 5x5 neighborhood with inverse distance weighting
+- GPU exposure shader: Sub-millisecond processing for 1920x1080 images
+- Camera color matrix: Parallel processing with rayon
+
+### Documentation
+- Updated CONCEPT.md references for RAW pipeline (Section 8)
+- Added inline documentation for TetherProvider trait
+- WGSL shader comments for exposure computation
+
 ## [0.3.0] - 2026-03-19
 
 ### Added
