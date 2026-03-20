@@ -87,6 +87,7 @@ pub struct AppState {
     pub preview_cache: Mutex<ocps_core::preview_cache::PreviewCache>,
     pub histories: Mutex<std::collections::HashMap<String, ocps_core::EditHistory>>,
     pub render_cache: Mutex<crate::render::RenderCache>,
+    pub tether_provider: Mutex<Box<dyn ocps_plugin_host::TetherProvider>>,
 }
 
 impl AppState {
@@ -116,6 +117,10 @@ impl AppState {
 
         let preview_cache = ocps_core::preview_cache::PreviewCache::new(cache_dir, 200);
 
+        // Initialize tether provider (mock for now)
+        let tether_provider: Box<dyn ocps_plugin_host::TetherProvider> =
+            Box::new(ocps_plugin_host::MockTetherProvider::new());
+
         Self {
             catalog: Mutex::new(None),
             clipboard: Mutex::new(None),
@@ -125,6 +130,7 @@ impl AppState {
             preview_cache: Mutex::new(preview_cache),
             histories: Mutex::new(std::collections::HashMap::new()),
             render_cache: Mutex::new(crate::render::RenderCache::new(10)),
+            tether_provider: Mutex::new(tether_provider),
         }
     }
 }
@@ -1725,12 +1731,83 @@ pub fn render_preview_with_recipe(
 }
 
 
-/// Check for tethered camera (stub for Phase 7)
+// ========== TETHERING COMMANDS ==========
+
+/// Discover available cameras for tethering
 #[tauri::command]
-pub fn check_tethered_camera() -> Result<serde_json::Value, String> {
+pub fn discover_cameras(state: State<AppState>) -> Result<Vec<serde_json::Value>, CommandError> {
+    let provider = state.tether_provider.lock().unwrap();
+    let cameras = provider.discover_cameras();
+
+    let cameras_json: Vec<serde_json::Value> = cameras
+        .iter()
+        .map(|cam| {
+            serde_json::json!({
+                "id": cam.id,
+                "name": cam.name,
+                "provider": cam.provider,
+                "connected": cam.connected,
+            })
+        })
+        .collect();
+
+    Ok(cameras_json)
+}
+
+/// Connect to a camera for tethering
+#[tauri::command]
+pub fn connect_camera(camera_id: String, state: State<AppState>) -> Result<(), CommandError> {
+    let mut provider = state.tether_provider.lock().unwrap();
+
+    provider
+        .connect(&camera_id)
+        .map_err(|e| CommandError::internal_error("Camera connection", e))?;
+
+    Ok(())
+}
+
+/// Disconnect from current tethered camera
+#[tauri::command]
+pub fn disconnect_camera(state: State<AppState>) -> Result<(), CommandError> {
+    let mut provider = state.tether_provider.lock().unwrap();
+
+    provider
+        .disconnect()
+        .map_err(|e| CommandError::internal_error("Camera disconnection", e))?;
+
+    Ok(())
+}
+
+/// Capture image from tethered camera
+#[tauri::command]
+pub fn tether_capture(state: State<AppState>) -> Result<serde_json::Value, CommandError> {
+    let mut provider = state.tether_provider.lock().unwrap();
+
+    let _data = provider
+        .capture()
+        .map_err(|e| CommandError::internal_error("Capture", e))?;
+
+    // For mock provider, just return success with shot info
+    // In real implementation, this would save the file and import it
     Ok(serde_json::json!({
-        "connected": false,
-        "message": "Tethering coming in Phase 7"
+        "success": true,
+        "message": "Captured (mock)",
+        "provider": provider.name(),
+    }))
+}
+
+/// Check for tethered camera (backwards compatibility)
+#[tauri::command]
+pub fn check_tethered_camera(state: State<AppState>) -> Result<serde_json::Value, String> {
+    let provider = state.tether_provider.lock().unwrap();
+    let cameras = provider.discover_cameras();
+
+    let connected = cameras.iter().any(|c| c.connected);
+
+    Ok(serde_json::json!({
+        "connected": connected,
+        "cameras": cameras.len(),
+        "provider": provider.name(),
     }))
 }
 

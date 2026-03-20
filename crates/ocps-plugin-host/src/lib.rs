@@ -4,10 +4,12 @@
 pub mod host;
 pub mod manifest;
 pub mod registry;
+pub mod tether;
 
 pub use host::{PluginHost, PluginPermissions, PluginState};
 pub use manifest::{load_manifest, PluginError};
 pub use registry::PluginRegistry;
+pub use tether::{MockTetherProvider, TetherError, TetherProvider, TetherSession, TetheredCamera};
 
 pub fn version() -> &'static str {
     env!("CARGO_PKG_VERSION")
