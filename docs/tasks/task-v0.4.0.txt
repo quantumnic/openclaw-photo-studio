@@ -1,0 +1,275 @@
+## Task: Tethering Foundation, GPU Shaders (wgpu), Fuji X-Trans, v0.4.0
+
+Read docs/concept/CONCEPT.md sections 4 (Architecture) and 8 (RAW Pipeline) first.
+Latest commit: 74ba826. Build on top. Run "git pull" first!
+
+### PART A: X-Trans Demosaicing (Fuji)
+
+Fuji cameras use X-Trans sensor pattern (6x6 CFA instead of 2x2 Bayer).
+The current demosaic only handles Bayer patterns.
+
+In crates/ocps-core/src/raw/demosaic.rs, add:
+
+pub fn demosaic_xtrans(
+    data: &[u16],
+    width: u32,
+    height: u32,
+) -> Vec<u16>
+// X-Trans pattern (6x6 repeating):
+// G B G G R G
+// R G R B G B
+// G B G G R G
+// G R G G B G
+// B G B R G R
+// G R G G B G
+//
+// Simple implementation: use adaptive homogeneity-directed (AHD) variant
+// Or for now: bilinear interpolation adapted for X-Trans
+// 
+// For each output pixel:
+//   Determine what color it is from the 6x6 pattern
+//   For R/B: interpolate from nearest same-color neighbors
+//   For G (majority): average of same-row and same-col greens
+
+// Also implement a function to detect if a RAW file is X-Trans:
+pub fn is_xtrans(camera_model: &str) -> bool
+// Return true for known Fuji X-Trans models:
+// X-T5, X-H2, X-H2S, X-T4, X-T3, X-S10, X100V, X-Pro3, GFX
+
+// Update decode flow in raw/mod.rs:
+// After rawloader decode, check if camera is X-Trans
+// Use demosaic_xtrans() instead of demosaic_bilinear() for those cameras
+
+Tests:
+- test_xtrans_pattern_dimensions: 6x6 input -> 6x6 RGB output (no size change)
+- test_xtrans_uniform_grey: uniform grey Bayer data -> uniform grey RGB output
+- test_is_xtrans_fuji: "X-T5" returns true, "A7 IV" returns false
+- test_demosaic_xtrans_vs_bayer_different: same data, different results for X-Trans vs Bayer
+
+### PART B: wgpu Compute Shader — Exposure (first real GPU stage)
+
+Now implement the first real GPU pipeline stage using wgpu.
+Start with just Exposure, prove the concept, rest follows.
+
+Create crates/ocps-core/src/gpu/pipeline.rs (behind #[cfg(feature = "gpu")]):
+
+The WGSL shader for exposure adjustment:
+
+Create crates/ocps-core/src/gpu/shaders/exposure.wgsl:
+```wgsl
+@group(0) @binding(0) var<storage, read> input: array<u32>;
+@group(0) @binding(1) var<storage, read_write> output: array<u32>;
+@group(0) @binding(2) var<uniform> params: ExposureParams;
+
+struct ExposureParams {
+    exposure_ev: f32,
+    width: u32,
+    height: u32,
+    _pad: u32,
+}
+
+@compute @workgroup_size(64)
+fn main(@builtin(global_invocation_id) id: vec3<u32>) {
+    let idx = id.x;
+    if idx >= params.width * params.height { return; }
+    
+    // Unpack RGB from u32 (packed as 0xRRGGBB00 in u16 pairs)
+    // For simplicity: each u32 stores one channel value as u16
+    let val = input[idx];
+    let linear = f32(val) / 65535.0;
+    
+    // Apply exposure: multiply by 2^ev
+    let factor = pow(2.0, params.exposure_ev);
+    let adjusted = clamp(linear * factor, 0.0, 1.0);
+    
+    output[idx] = u32(adjusted * 65535.0);
+}
+```
+
+pub async fn apply_exposure_gpu(
+    ctx: &GpuContext,
+    data: &[u16],    // single channel input
+    exposure_ev: f32,
+) -> Result<Vec<u16>, GpuError>
+// Create buffers, bind groups, dispatch compute shader, read back results
+
+Tests (only if #[cfg(feature = "gpu")] and GPU available):
+- test_gpu_exposure_identity: ev=0.0 -> values unchanged (within rounding)
+- test_gpu_exposure_positive: ev=1.0 -> values approximately doubled
+
+Note: these tests should be feature-gated and skipped if no GPU:
+#[cfg(feature = "gpu")]
+#[test]
+fn test_gpu_exposure_identity() { ... }
+
+### PART C: Camera Profile Database
+
+Implement a camera color matrix database.
+
+Create crates/ocps-core/src/raw/camera_profiles.rs:
+
+#[derive(Debug, Clone)]
+pub struct CameraColorMatrix {
+    pub camera_make: String,
+    pub camera_model: String,
+    // Camera to XYZ D65 color matrix (3x3)
+    pub xyz_matrix: [[f32; 3]; 3],
+    // Forward matrix (XYZ to camera)
+    pub forward_matrix: Option<[[f32; 3]; 3]>,
+    // Black and white levels
+    pub black_level: u16,
+    pub white_level: u16,
+}
+
+impl CameraColorMatrix {
+    pub fn for_camera(make: &str, model: &str) -> Option<Self>
+    // Lookup in built-in database
+    // Include at minimum:
+    // - Sony A7 IV (ILCE-7M4)
+    // - Sony A7R V (ILCE-7RM5)
+    // - Nikon Z8
+    // - Nikon Z6 III
+    // - Canon EOS R5
+    // - Canon EOS R6 Mark II
+    // - Fujifilm X-T5
+    // - Fujifilm X-H2
+    // - Panasonic S5 II
+    // - Olympus OM-5
+    // Use actual DNG color matrices from dcraw source or Adobe DNG SDK docs
+    // These are public domain data
+
+    pub fn apply_to_image(
+        &self,
+        data: &mut [u16],
+        width: u32,
+        height: u32,
+    )
+    // Apply color matrix multiplication to convert camera space to linear sRGB
+    // For each pixel (r, g, b):
+    //   r_out = m[0][0]*r + m[0][1]*g + m[0][2]*b
+    //   g_out = m[1][0]*r + m[1][1]*g + m[1][2]*b
+    //   b_out = m[2][0]*r + m[2][1]*g + m[2][2]*b
+    //   Clamp to [0, 65535]
+}
+
+Tests:
+- test_color_matrix_sony_a7iv_exists: for_camera("Sony", "ILCE-7M4") returns Some
+- test_color_matrix_identity_unchanged: identity matrix -> values unchanged
+- test_color_matrix_apply_preserves_grey: grey pixel (equal R/G/B) stays grey
+
+Wire into raw/mod.rs:
+After demosaic, before pipeline: apply camera color matrix if known.
+If not in database: skip (log warning).
+
+### PART D: Tethering Infrastructure
+
+Create the infrastructure for tethered shooting.
+No actual camera communication yet (that requires platform SDKs),
+but build the UI and protocol layer.
+
+Create crates/ocps-plugin-host/src/tether.rs:
+
+pub trait TetherProvider: Send + Sync {
+    fn name(&self) -> &str;
+    fn discover_cameras(&self) -> Vec<TetheredCamera>;
+    fn connect(&mut self, camera_id: &str) -> Result<(), TetherError>;
+    fn disconnect(&mut self) -> Result<(), TetherError>;
+    fn capture(&mut self) -> Result<Vec<u8>, TetherError>;  // returns raw file bytes
+    fn live_view_frame(&mut self) -> Result<Option<Vec<u8>>, TetherError>;  // JPEG frame
+}
+
+pub struct TetheredCamera {
+    pub id: String,
+    pub name: String,          // "Canon EOS R5"
+    pub provider: String,      // "gphoto2", "ptp", "sdk"
+    pub connected: bool,
+}
+
+pub struct TetherSession {
+    pub camera: TetheredCamera,
+    pub import_folder: PathBuf,
+    pub auto_import: bool,
+    pub shot_count: u32,
+}
+
+// Mock provider for testing:
+pub struct MockTetherProvider {
+    connected: bool,
+    shot_count: u32,
+}
+
+impl TetherProvider for MockTetherProvider {
+    fn name(&self) -> &str { "Mock Camera" }
+    fn discover_cameras(&self) -> Vec<TetheredCamera> {
+        vec![TetheredCamera {
+            id: "mock-001".into(),
+            name: "Mock Camera (Test)".into(),
+            provider: "mock".into(),
+            connected: self.connected,
+        }]
+    }
+    fn connect(&mut self, _id: &str) -> Result<(), TetherError> {
+        self.connected = true; Ok(())
+    }
+    fn disconnect(&mut self) -> Result<(), TetherError> {
+        self.connected = false; Ok(())
+    }
+    fn capture(&mut self) -> Result<Vec<u8>, TetherError> {
+        self.shot_count += 1;
+        // Return a minimal valid JPEG
+        Ok(vec![0xFF, 0xD8, 0xFF, 0xE0]) // JPEG header stub
+    }
+    fn live_view_frame(&mut self) -> Result<Option<Vec<u8>>, TetherError> {
+        Ok(None) // No live view in mock
+    }
+}
+
+Add Tauri commands:
+- discover_cameras() -> Vec<serde_json::Value>
+  Uses MockTetherProvider for now, returns camera list
+- connect_camera(camera_id: String) -> Result<(), CommandError>
+- disconnect_camera() -> Result<(), CommandError>
+- tether_capture() -> Result<serde_json::Value, CommandError>
+  Simulates capture: returns { shot_count, message: "Captured (mock)" }
+
+Update TetheringPanel.tsx to use real IPC commands:
+- Show "Discover Cameras" button -> calls discover_cameras
+- If cameras found: show list with "Connect" button
+- If connected: show "Capture" button + shot count
+- Mock shows "Mock Camera (Test)" in the list
+
+Tests:
+- test_mock_tether_connect: connect to mock camera, verify connected=true
+- test_mock_tether_capture: capture, verify returns bytes starting with JPEG magic
+- test_mock_discover_cameras: discover returns 1 camera
+
+### PART E: v0.4.0 Release
+
+After all features are in and tests pass:
+
+1. Update CHANGELOG.md: add v0.4.0 section
+2. Bump version to 0.4.0 in Cargo.toml and tauri.conf.json
+3. git tag v0.4.0 -m "v0.4.0 - X-Trans support, wgpu foundation, camera profiles, tethering"
+4. git push origin v0.4.0
+
+### PART F: MANDATORY
+
+cargo clean if disk < 5GB free (check with: df -h /)
+cargo test --all — must pass.
+cargo clippy --all — clean.
+Target: >295 tests.
+
+### PART G: Commits and Push
+
+Git config: user.name="Quantum Nic", user.email="quantumnic@users.noreply.github.com"
+
+Four commits:
+1. "feat(raw): X-Trans demosaicing for Fuji cameras, camera color matrix DB"
+2. "feat(gpu): wgpu compute shader for exposure, GPU pipeline foundation"
+3. "feat(tether): tethering infrastructure with mock provider and UI"
+4. "chore: v0.4.0 release — CHANGELOG, version bump, tag"
+
+Push to origin main + tag.
+
+When completely finished, run:
+openclaw system event --text "Done: v0.4.0 — X-Trans, wgpu Shader, Camera Profiles, Tethering Mock — Tests gruen, gepusht" --mode now
