@@ -6,7 +6,7 @@ description = "OpenClaw Photo Studio — Core Engine (RAW decode, GPU pipeline, 
 license = "LicenseRef-PolyForm-Noncommercial-1.0.0"
 
 [features]
-gpu = ["wgpu"]
+gpu = ["wgpu", "bytemuck", "futures"]
 default = []
 
 [dependencies]
@@ -23,6 +23,8 @@ half = { workspace = true }
 chrono = { workspace = true }
 base64 = "0.22"
 wgpu = { version = "22", optional = true }
+bytemuck = { version = "1.14", features = ["derive"], optional = true }
+futures = { version = "0.3", optional = true }
 
 [dev-dependencies]
 tempfile = "3"
