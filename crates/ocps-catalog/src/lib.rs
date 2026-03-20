@@ -52,6 +52,7 @@ pub mod schema {
             creator         TEXT,
             city            TEXT,
             country         TEXT,
+            face_regions    TEXT,
             schema_version  INTEGER DEFAULT 1
         )
     "#;
