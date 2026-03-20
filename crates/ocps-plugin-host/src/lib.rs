@@ -1,14 +1,20 @@
 //! ocps-plugin-host — WASM Plugin Host
 //! Sandboxed plugin execution via wasmtime
 
+pub mod api;
 pub mod host;
 pub mod manifest;
+pub mod marketplace;
 pub mod registry;
+pub mod sdk;
 pub mod tether;
 
+pub use api::{PluginErrorCode, PluginType, PLUGIN_API_VERSION};
 pub use host::{PluginHost, PluginPermissions, PluginState};
 pub use manifest::{load_manifest, PluginError};
+pub use marketplace::{Marketplace, MarketplaceError, MarketplacePlugin};
 pub use registry::PluginRegistry;
+pub use sdk::{generate_rust_template, generate_wat_template};
 pub use tether::{MockTetherProvider, TetherError, TetherProvider, TetherSession, TetheredCamera};
 
 pub fn version() -> &'static str {

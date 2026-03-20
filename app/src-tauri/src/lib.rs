@@ -70,6 +70,11 @@ pub fn run() {
             commands::redo_edit,
             commands::get_edit_history,
             commands::get_display_info,
+            commands::get_marketplace_plugins,
+            commands::search_marketplace,
+            commands::install_plugin,
+            commands::uninstall_plugin,
+            commands::merge_hdr_photos,
         ])
         .setup(|app| {
             #[cfg(debug_assertions)]
