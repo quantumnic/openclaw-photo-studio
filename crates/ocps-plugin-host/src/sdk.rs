@@ -38,7 +38,7 @@ pub fn generate_rust_template() -> String {
     s.push_str("pub extern \"C\" fn process_image(_w: i32, _h: i32) -> i32 { 0 }\n\n");
     s.push_str("// Plugin API version: ");
     s.push_str(&api_ver);
-    s.push_str("\n");
+    s.push('\n');
     s
 }
 

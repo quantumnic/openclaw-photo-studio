@@ -125,7 +125,7 @@ impl PluginType {
         }
     }
 
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn parse(s: &str) -> Option<Self> {
         match s {
             "image_filter" => Some(Self::ImageFilter),
             "import_export" => Some(Self::ImportExport),
@@ -175,15 +175,15 @@ mod tests {
 
         for plugin_type in &types {
             let s = plugin_type.as_str();
-            let parsed = PluginType::from_str(s).expect("Should parse back");
+            let parsed = PluginType::parse(s).expect("Should parse back");
             assert_eq!(&parsed, plugin_type, "Roundtrip failed for {:?}", plugin_type);
         }
     }
 
     #[test]
     fn test_plugin_type_from_str_invalid() {
-        assert!(PluginType::from_str("invalid").is_none());
-        assert!(PluginType::from_str("").is_none());
-        assert!(PluginType::from_str("ImageFilter").is_none()); // case sensitive
+        assert!(PluginType::parse("invalid").is_none());
+        assert!(PluginType::parse("").is_none());
+        assert!(PluginType::parse("ImageFilter").is_none()); // case sensitive
     }
 }

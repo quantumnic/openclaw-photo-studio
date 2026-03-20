@@ -77,17 +77,17 @@ impl CameraColorMatrix {
         }
 
         // Panasonic cameras
-        if make_lower.contains("panasonic") {
-            if model_lower.contains("s5") && model_lower.contains("ii") {
-                return Some(Self::panasonic_s5_ii());
-            }
+        if make_lower.contains("panasonic")
+            && model_lower.contains("s5") && model_lower.contains("ii")
+        {
+            return Some(Self::panasonic_s5_ii());
         }
 
         // Olympus/OM System cameras
-        if make_lower.contains("olympus") || make_lower.contains("om") {
-            if model_lower.contains("om-5") {
-                return Some(Self::olympus_om5());
-            }
+        if (make_lower.contains("olympus") || make_lower.contains("om"))
+            && model_lower.contains("om-5")
+        {
+            return Some(Self::olympus_om5());
         }
 
         None
