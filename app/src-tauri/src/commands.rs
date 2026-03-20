@@ -2455,7 +2455,7 @@ pub fn merge_hdr_photos(
     // Load all photos and their exposures
     let mut exposures = Vec::new();
 
-    for photo_id in &photo_ids {
+    for (idx, photo_id) in photo_ids.iter().enumerate() {
         // Get photo metadata
         let photo = catalog
             .get_photo(photo_id)
@@ -2482,9 +2482,9 @@ pub fn merge_hdr_photos(
             data_u16,
         );
 
-        // Get EV offset from EXIF (ExposureBiasValue)
-        // TODO: Read actual exposure bias from EXIF metadata
-        let ev_offset = 0.0f32;
+        // Use index-based EV offset (assume images are sorted darkest to brightest)
+        // In production, would read from EXIF ExposureBiasValue
+        let ev_offset = (idx as f32) - (photo_ids.len() / 2) as f32;
 
         exposures.push((image, ev_offset));
     }
