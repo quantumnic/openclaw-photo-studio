@@ -9,6 +9,7 @@ pub mod naming;
 pub mod color;
 pub mod watermark;
 pub mod contact_sheet;
+pub mod queue;
 
 pub use dng::export_dng;
 pub use naming::{apply_naming_template, PhotoForNaming};
