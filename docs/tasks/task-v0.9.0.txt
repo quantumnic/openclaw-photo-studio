@@ -1,0 +1,215 @@
+## Task: v0.9.0 RC — Final QA, Bug Fixes, Performance, v1.0 Readiness
+
+Current branch: main. Latest: 31cecbe (v0.8.0). Git pull first!
+This is the Release Candidate phase. Focus: stability, polish, documentation.
+
+### PART A: Comprehensive Bug Hunt
+
+Read ALL existing test files and look for gaps. Add missing tests for edge cases.
+
+Priority test gaps to fill:
+
+1. ocps-catalog: test what happens when catalog path is read-only
+2. ocps-catalog: test concurrent access (two catalog instances on same file)
+3. ocps-xmp: test XMP with UTF-8 special characters (umlauts, Chinese, emoji in keywords)
+4. ocps-xmp: test malformed/truncated XMP file handling (no panic, graceful error)
+5. ocps-core/pipeline: test pipeline with extreme values (exposure +5, contrast 100, saturation -100)
+6. ocps-core/pipeline: test pipeline with 1x1 pixel image (edge case)
+7. ocps-export: test export to path that doesn't exist (should create dirs or fail cleanly)
+8. ocps-export: test JPEG quality boundary (quality=1, quality=100)
+9. ocps-catalog: test import of folder with 0 supported files
+10. ocps-catalog: test import of nested folders (10 levels deep)
+11. Search: test empty query returns all photos
+12. Search: test query with only spaces
+13. Edit history: test that history doesn't grow beyond max_entries after 1000 pushes
+14. Copy/paste: test paste on empty clipboard (should return error, not panic)
+15. Preset: test apply preset with None values (partial preset)
+
+Add at minimum 20 new tests across these areas.
+Target: >390 tests.
+
+### PART B: Error Recovery Flows
+
+Add proper recovery for common error scenarios:
+
+1. When catalog can't be opened (locked by another process):
+   Show dialog: "Catalog is locked by another application. Close it and try again."
+   Retry button that tries again after 2 seconds.
+
+2. When RAW file can't be decoded:
+   Show placeholder in grid (grey with "!" icon)
+   Tooltip: "Format not supported: .CR3" (or whatever)
+   Don't crash the import — skip with warning.
+
+3. When export fails mid-batch:
+   Continue with remaining photos
+   Show summary at end: "47 exported, 3 failed. [Show Errors]"
+
+4. When XMP sidecar is corrupted:
+   Log warning, use catalog values instead
+   Show indicator on photo: small "XMP" badge in orange
+
+5. When thumbnail cache is corrupted/missing:
+   Delete bad cache entry, regenerate thumbnail
+   Don't show broken image icon
+
+Add these recovery flows in Rust commands and wire UI feedback:
+- Tauri commands: return structured errors with recovery suggestions
+- Frontend: handle each error type with appropriate UX
+
+Tests:
+- test_decode_unsupported_format_doesnt_crash: pass a .txt file as RAW, verify graceful error
+- test_import_skips_unsupported_files: folder with mix of supported/unsupported, verify only valid ones imported
+- test_export_batch_continues_on_error: batch export with one invalid photo_id, verify others succeed
+
+### PART C: Memory Optimization
+
+Audit memory usage and fix leaks.
+
+1. In render cache: verify eviction actually frees memory
+   Add a test: fill cache to limit, add one more, verify total size doesn't grow unbounded
+
+2. In thumbnail service: ensure base64 strings are not kept longer than needed
+   Add explicit drop after response is sent
+
+3. In SQLite: add connection pooling hint
+   PRAGMA cache_size = -16000;  (16MB cache)
+   PRAGMA temp_store = MEMORY;
+   PRAGMA mmap_size = 268435456;  (256MB mmap)
+
+4. In pipeline: verify large intermediate buffers are freed after processing
+   Process image, return result, verify memory is released (hard to test directly, add note)
+
+5. In WASM plugin host: verify plugin Store memory is bounded
+   Add max_memory config to wasmtime Engine
+
+Add Tauri command: get_memory_usage() -> serde_json::Value
+Returns: { catalog_cache_mb: f32, thumbnail_cache_mb: f32, render_cache_entries: u32 }
+Show in Diagnostics panel.
+
+Tests:
+- test_render_cache_bounded: add 20 entries to cache with max=10, verify only 10 kept
+- test_sqlite_pragmas_set: open catalog, verify pragmas are applied
+- test_thumbnail_cache_cleanup: fill cache, trigger cleanup, verify size reduced
+
+### PART D: Accessibility Improvements
+
+1. All interactive elements need aria-labels:
+   - Add aria-label to all icon-only buttons
+   - Add role="slider" to custom sliders
+   - Add aria-valuemin/max/now to sliders
+   - Add aria-pressed to toggle buttons
+
+2. Focus management:
+   - When dialog opens: focus first interactive element
+   - When dialog closes: return focus to trigger element
+   - Tab order should be logical in all panels
+
+3. Keyboard-only navigation check:
+   - Tab through all panels without mouse
+   - Verify all buttons reachable
+   - Verify sliders adjustable with arrow keys when focused
+
+4. Color contrast:
+   - Check all text meets WCAG AA (4.5:1 for normal, 3:1 for large)
+   - Main text [#d4d4d4] on [#141414]: ratio ~10:1 ✓
+   - Secondary text [#808080] on [#141414]: ratio ~4.5:1 ✓ (borderline)
+   - Muted text [#555555] on [#141414]: ratio ~2.8:1 ✗ → fix to [#6a6a6a] for WCAG AA
+
+Update global.css: change --text-muted from #555555 to #6a6a6a
+
+5. Add skip-to-content link (hidden until focused):
+   ```tsx
+   <a href="#main-content" class="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-50 focus:p-2 focus:bg-[#4a9eff] focus:text-white focus:rounded">
+     Skip to main content
+   </a>
+   ```
+
+### PART E: Documentation Polish
+
+Update and expand documentation:
+
+1. docs/build-guide.md: add troubleshooting section:
+   - "cargo build fails with 'linker not found'" -> install Xcode CLT / build-essential
+   - "pnpm tauri dev shows blank window" -> check WebView2 on Windows
+   - "tests fail on Linux" -> install libgtk-3-dev etc.
+   - "disk full during build" -> run cargo clean
+
+2. docs/architecture.md: add diagrams (ASCII art):
+   - Data flow: RAW file → decode → pipeline → display
+   - Catalog architecture: SQLite + XMP + filesystem
+   - IPC: Frontend → Tauri Command → Rust → Response
+
+3. Create docs/user-guide.md:
+   - Getting started (import folder)
+   - Library workflow (rate, flag, filter)
+   - Develop workflow (sliders, copy/paste, export)
+   - Keyboard shortcuts reference
+   - Tips: "Press ? for keyboard shortcuts"
+
+4. Create docs/plugin-guide.md (brief):
+   - How to create a plugin
+   - plugin.toml format
+   - Available permissions
+   - Example: LUT plugin in WAT
+   - Future: WASM in Rust/C
+
+5. Update README.md:
+   - Add accurate feature list (v0.9.0 state)
+   - Add "Building from source" section
+   - Add "Architecture" section with brief description
+   - Add "License" section with clear explanation
+
+### PART F: Final Release Checks
+
+Before v1.0, verify:
+
+1. cargo build --release compiles without warnings
+   Run: cargo build --release 2>&1 | grep "warning:"
+   Fix any remaining warnings
+
+2. cargo clippy --all -- -D warnings passes
+   Fix any remaining issues
+
+3. All Tauri commands have proper error types (CommandError, not String)
+   Audit: grep for ") -> Result<" in commands.rs, verify all use CommandError
+
+4. All public Rust APIs have doc comments
+   Add /// comments to all pub fn in lib.rs files
+
+5. Version consistency:
+   - Cargo.toml workspace version = "0.9.0"
+   - app/src-tauri/tauri.conf.json version = "0.9.0"
+   - All crate Cargo.toml versions = "0.9.0"
+
+6. CHANGELOG.md has complete entry for v0.9.0
+
+### PART G: v0.9.0 Tag + develop merge
+
+git checkout main
+git merge develop --no-ff -m "chore: sync develop into main" (if needed)
+Bump all versions to 0.9.0
+git tag v0.9.0 -m "v0.9.0 RC — 390+ tests, full feature set, ready for v1.0"
+git push origin main
+git push origin v0.9.0
+
+### PART H: MANDATORY
+
+cargo test --all — must pass.
+cargo clippy --all -- -D warnings — must be clean.
+Target: >390 tests.
+
+### PART I: Commits
+
+Git config: user.name="Quantum Nic", user.email="quantumnic@users.noreply.github.com"
+
+Four commits:
+1. "test: comprehensive edge case tests, 390+ total"
+2. "fix: error recovery flows, memory optimization, accessibility"
+3. "docs: user guide, plugin guide, architecture diagrams, README update"
+4. "chore: v0.9.0 RC — version bump, final QA, tag"
+
+Push to main + tag.
+
+When completely finished, run:
+openclaw system event --text "Done: v0.9.0 RC — 390+ Tests, Error Recovery, Memory Optimization, Accessibility, Docs — gepusht" --mode now
