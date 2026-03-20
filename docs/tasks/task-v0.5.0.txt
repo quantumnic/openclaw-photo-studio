@@ -1,0 +1,349 @@
+## Task: v0.5.0 — Vim Mode, Brush Tool, GPU Full Pipeline, develop Branch
+
+Read docs/concept/SHORTCUTS.md (Vim Mode section) and docs/concept/FEATURES.md first.
+Latest commit: 9f6c233 (v0.4.0). Run git pull first!
+
+### PART A: Setup develop branch
+
+Create a develop branch for ongoing work:
+git checkout -b develop
+git push -u origin develop
+
+All future commits go to develop. main only gets release tags.
+
+### PART B: Vim Mode (Expert Keyboard Profile)
+
+Create app/src/lib/vimMode.ts:
+
+The Vim Mode adds modal keyboard navigation on top of the shortcut engine.
+When enabled (toggle in Preferences), the app operates in NORMAL mode by default.
+Pressing specific keys enters other modes.
+
+```typescript
+type VimModeState = "normal" | "edit" | "command" | "visual";
+
+export class VimMode {
+  private state: VimModeState = "normal";
+  private commandBuffer = "";
+  private onAction: (action: string, args?: any) => void;
+  
+  constructor(onAction: (action: string, args?: any) => void) {
+    this.onAction = onAction;
+  }
+  
+  handleKey(e: KeyboardEvent): boolean {
+    // Returns true if key was consumed by vim mode
+    // Don't consume if focus is on an input element
+    if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+      return false;
+    }
+    
+    switch (this.state) {
+      case "normal": return this.handleNormalMode(e);
+      case "command": return this.handleCommandMode(e);
+      case "visual": return this.handleVisualMode(e);
+      default: return false;
+    }
+  }
+  
+  private handleNormalMode(e: KeyboardEvent): boolean {
+    // Navigation
+    if (e.key === "h") { this.onAction("photo.prev"); return true; }
+    if (e.key === "l") { this.onAction("photo.next"); return true; }
+    if (e.key === "j") { this.onAction("photo.next_row"); return true; }
+    if (e.key === "k") { this.onAction("photo.prev_row"); return true; }
+    if (e.key === "g" && this.commandBuffer === "g") {
+      this.onAction("photo.first"); this.commandBuffer = ""; return true;
+    }
+    if (e.key === "g") { this.commandBuffer = "g"; return true; }
+    if (e.key === "G") { this.onAction("photo.last"); return true; }
+    
+    // Rating
+    if (e.key >= "1" && e.key <= "5") { this.onAction("rate", parseInt(e.key)); return true; }
+    if (e.key === "0") { this.onAction("rate", 0); return true; }
+    
+    // Flags
+    if (e.key === "p" || e.key === "P") { this.onAction("flag.pick"); return true; }
+    if (e.key === "x" || e.key === "X") { this.onAction("flag.reject"); return true; }
+    if (e.key === "u" || e.key === "U") { this.onAction("flag.none"); return true; }
+    
+    // Edit operations  
+    if (e.key === "y" && this.commandBuffer === "y") {
+      this.onAction("develop.copy"); this.commandBuffer = ""; return true;
+    }
+    if (e.key === "y") { this.commandBuffer = "y"; return true; }
+    if (e.key === "p" && e.ctrlKey) { this.onAction("develop.paste"); return true; }
+    if (e.key === "u" && e.ctrlKey) { this.onAction("edit.undo"); return true; }
+    if (e.key === "r" && e.ctrlKey) { this.onAction("edit.redo"); return true; }
+    if (e.key === ".") { this.onAction("edit.repeat"); return true; }
+    
+    // Mode switches
+    if (e.key === ":") { this.state = "command"; this.commandBuffer = ""; return true; }
+    if (e.key === "v") { this.state = "visual"; return true; }
+    if (e.key === "Escape") { this.commandBuffer = ""; return true; }
+    
+    // Modules
+    if (e.key === "d" && !e.metaKey && !e.ctrlKey) { this.onAction("module.develop"); return true; }
+    
+    return false;
+  }
+  
+  private handleCommandMode(e: KeyboardEvent): boolean {
+    if (e.key === "Escape") { this.state = "normal"; this.commandBuffer = ""; return true; }
+    if (e.key === "Enter") {
+      this.executeCommand(this.commandBuffer);
+      this.state = "normal";
+      this.commandBuffer = "";
+      return true;
+    }
+    if (e.key === "Backspace") {
+      this.commandBuffer = this.commandBuffer.slice(0, -1);
+      return true;
+    }
+    if (e.key.length === 1) {
+      this.commandBuffer += e.key;
+      return true;
+    }
+    return false;
+  }
+  
+  private handleVisualMode(e: KeyboardEvent): boolean {
+    if (e.key === "Escape") { this.state = "normal"; return true; }
+    // Arrow keys extend selection
+    if (e.key === "h") { this.onAction("select.extend_prev"); return true; }
+    if (e.key === "l") { this.onAction("select.extend_next"); return true; }
+    if (e.key === "j") { this.onAction("select.extend_down"); return true; }
+    if (e.key === "k") { this.onAction("select.extend_up"); return true; }
+    // Apply to selection
+    if (e.key >= "0" && e.key <= "5") { this.onAction("rate.selection", parseInt(e.key)); return true; }
+    if (e.key === "p") { this.onAction("develop.paste.selection"); return true; }
+    return false;
+  }
+  
+  private executeCommand(cmd: string): void {
+    // :e or :export -> open export dialog
+    if (cmd === "e" || cmd === "export") { this.onAction("export.open"); return; }
+    // :i or :import -> open import
+    if (cmd === "i" || cmd === "import") { this.onAction("import.open"); return; }
+    // :sync -> sync settings
+    if (cmd === "sync") { this.onAction("develop.sync"); return; }
+    // :w -> save XMP sidecar
+    if (cmd === "w") { this.onAction("catalog.save_sidecar"); return; }
+    // :q -> quit (with confirm)
+    if (cmd === "q") { this.onAction("app.quit"); return; }
+    // :rate N -> set rating
+    if (cmd.startsWith("rate ")) {
+      const n = parseInt(cmd.slice(5));
+      if (!isNaN(n)) this.onAction("rate", n);
+      return;
+    }
+    // :flag pick/reject/none
+    if (cmd.startsWith("flag ")) {
+      this.onAction("flag." + cmd.slice(5).trim());
+      return;
+    }
+    // :preset <name> -> apply preset by name
+    if (cmd.startsWith("preset ")) {
+      this.onAction("preset.apply_by_name", cmd.slice(7).trim());
+      return;
+    }
+  }
+  
+  get currentState(): VimModeState { return this.state; }
+  get commandBufferContent(): string { return this.commandBuffer; }
+  isEnabled = false;
+}
+```
+
+Add to AppShell:
+- VimMode instance
+- Mode indicator in toolbar: "NORMAL" / "COMMAND: :" / "VISUAL" badge
+- Command input shown in bottom status bar when in command mode
+- Toggle in Preferences: "Enable Vim Mode"
+- Persist preference in localStorage
+
+Show mode indicator only when Vim Mode is enabled:
+```tsx
+{vimModeEnabled() && (
+  <div class={`px-2 py-0.5 text-xs font-mono rounded ${
+    vimState() === "normal" ? "bg-[#2a4a2a] text-[#4a9] " :
+    vimState() === "command" ? "bg-[#4a3a0a] text-[#e8c] " :
+    "bg-[#2a2a4a] text-[#49f] "
+  }`}>
+    {vimState().toUpperCase()}
+    {vimState() === "command" ? `: ${commandBuffer()}` : ""}
+  </div>
+)}
+```
+
+Tests (TypeScript - add to a simple test file using Node's built-in test runner):
+Create app/src/lib/__tests__/vimMode.test.ts:
+- test vim normal mode h/l navigation fires correct actions
+- test vim command mode :rate 5 fires rate action
+- test vim visual mode v enters visual, escape exits
+- test vim ignores keys when input focused
+
+### PART C: Full GPU Pipeline (wgpu) — Remaining Stages
+
+Expand the GPU pipeline beyond just Exposure.
+Add the remaining tone adjustments as compute shaders.
+
+Create these WGSL shaders in crates/ocps-core/src/gpu/shaders/:
+
+1. tone.wgsl — Contrast, Highlights, Shadows, Whites, Blacks:
+```wgsl
+struct ToneParams {
+    contrast: f32,
+    highlights: f32,
+    shadows: f32,
+    whites: f32,
+    blacks: f32,
+}
+// For each pixel: apply tone curve adjustments
+// Contrast: S-curve
+// Highlights/Shadows: range compression
+// Whites/Blacks: endpoint adjustment
+```
+
+2. color.wgsl — Vibrance, Saturation:
+```wgsl
+// Convert RGB to HSV
+// Adjust saturation/vibrance
+// Convert back to RGB
+```
+
+3. combine.wgsl — Final output stage:
+```wgsl
+// Apply gamma encoding (sRGB)
+// Convert u16 linear to u8 sRGB
+// Pack 3 channels into output buffer
+```
+
+Create crates/ocps-core/src/gpu/full_pipeline.rs:
+```rust
+#[cfg(feature = "gpu")]
+pub async fn process_image_gpu(
+    ctx: &GpuContext,
+    image: &RgbImage16,
+    recipe: &EditRecipe,
+) -> Result<RgbImage8, GpuError>
+// Chain: exposure -> tone -> color -> combine
+// Each stage: GPU buffer -> shader -> GPU buffer
+// Final stage: read back to CPU as Vec<u8>
+```
+
+If GPU not available or feature not enabled: fall through to CPU pipeline.
+
+Tests (feature-gated):
+- test_gpu_full_pipeline_default: default recipe -> valid output same size
+- test_gpu_pipeline_matches_cpu: compare GPU and CPU output for same input/recipe
+  (allow tolerance of ±2 per channel due to float precision)
+
+### PART D: Brush Tool (Local Adjustments)
+
+Implement interactive brush for local adjustments.
+The Adjustment Brush paints a mask on the image.
+
+Add to DevelopView in MainView.tsx:
+
+```tsx
+// Brush state
+const [brushActive, setBrushActive] = createSignal(false);
+const [brushSize, setBrushSize] = createSignal(50);   // 0-100, relative to image size
+const [brushFeather, setBrushFeather] = createSignal(50);  // 0-100
+const [brushFlow, setBrushFlow] = createSignal(100);  // 0-100
+const [isErasing, setIsErasing] = createSignal(false);
+const [currentStroke, setCurrentStroke] = createSignal<{x: number, y: number}[]>([]);
+const [brushCursor, setBrushCursor] = createSignal<{x: number, y: number} | null>(null);
+
+// Brush overlay canvas (drawn on top of image)
+// Shows:
+// - Current brush cursor (circle showing size + feather edge)
+// - Existing mask overlay (semi-transparent red/white)
+// - Current stroke being painted
+
+function onImageMouseMove(e: MouseEvent) {
+  if (!brushActive()) return;
+  const rect = (e.target as HTMLElement).getBoundingClientRect();
+  const x = (e.clientX - rect.left) / rect.width;
+  const y = (e.clientY - rect.top) / rect.height;
+  setBrushCursor({ x, y });
+  if (e.buttons === 1) {
+    setCurrentStroke(s => [...s, { x, y }]);
+  }
+}
+
+function onImageMouseUp() {
+  if (currentStroke().length > 0 && brushActive()) {
+    // Add stroke to current local adjustment
+    addBrushStroke(currentStroke(), brushSize(), brushFeather(), brushFlow(), isErasing());
+    setCurrentStroke([]);
+  }
+}
+
+// Brush cursor drawn as SVG overlay:
+function BrushCursor(props: { x: number, y: number, size: number, feather: number }) {
+  // Two concentric circles: inner (hard edge) and outer (feather edge)
+  // White circle with slight drop shadow for visibility on any background
+}
+```
+
+Wire K key -> toggle brush mode (already in shortcuts).
+When brush active: image gets crosshair cursor, brush circle follows mouse.
+Alt key while brushing: switch to erase mode.
+
+Brush settings panel (shown when brush active):
+- Size slider (1-100)
+- Feather slider (0-100)  
+- Flow slider (1-100)
+- Reset/New Brush button
+- Erase toggle
+
+### PART E: Second Monitor Support
+
+Detect if a second monitor is available and offer to show the develop view there.
+
+In AppShell, add:
+```tsx
+const [secondaryWindow, setSecondaryWindow] = createSignal<Window | null>(null);
+
+async function openSecondMonitor() {
+  // Open a new browser window/Tauri window for the secondary display
+  // Show a simplified view: just the image, no panels
+}
+```
+
+Add Tauri command:
+pub fn get_display_info() -> Result<serde_json::Value, CommandError>
+// Return { display_count: usize, primary: { width, height }, secondary: Option<{ width, height }> }
+// Use tauri::window to enumerate displays
+
+Add F5 shortcut: toggle secondary display.
+For now: just open a new browser window at /secondary with the current photo.
+Create a minimal SecondaryView component.
+
+### PART F: MANDATORY
+
+cargo clean if df -h / shows < 5GB free.
+cargo test --all — must pass.
+cargo clippy --all — clean.
+Target: >310 tests.
+
+### PART G: Commits and Push (to develop branch)
+
+IMPORTANT: push to develop branch, NOT main!
+
+Git config: user.name="Quantum Nic", user.email="quantumnic@users.noreply.github.com"
+
+First: git checkout -b develop (if not exists) or git checkout develop
+
+Four commits:
+1. "feat(vim): Vim mode with normal/visual/command states"
+2. "feat(gpu): full GPU pipeline — tone, color, combine shaders"
+3. "feat(brush): adjustment brush tool with canvas overlay"
+4. "feat(display): second monitor support stub"
+
+Push to origin develop.
+
+When completely finished, run:
+openclaw system event --text "Done: v0.5.0 dev — Vim Mode, GPU Full Pipeline, Brush Tool, Second Monitor — Tests gruen, develop branch gepusht" --mode now
