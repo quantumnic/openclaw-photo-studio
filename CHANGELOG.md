@@ -5,6 +5,58 @@ All notable changes to OpenClaw Photo Studio will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-03-20
+
+### Added
+
+#### Plugin System SDK v1.0 (Stable)
+- **Plugin API v1.0** - Stable plugin interface contract
+  - Host function imports: logging, image access, metadata, UI functions
+  - Plugin exports: init, info, process_image, get_parameters
+  - Memory management via linear WASM memory
+  - Comprehensive API documentation with JSON schemas
+- **SDK Templates** for plugin development
+  - Rust plugin template with full host function wrappers
+  - WAT (WebAssembly Text) plugin template for minimal plugins
+  - Complete build instructions and Cargo.toml examples
+  - 8 tests covering template generation and compilation
+
+#### Plugin Marketplace Foundation
+- **Marketplace client** for plugin discovery and installation
+  - Demo marketplace with 5 sample plugins (LUT Loader, Flickr Upload, AI Denoise, etc.)
+  - Search functionality by name and description
+  - Filter by plugin type (image_filter, integration, ai_ml, etc.)
+  - Top rated and most downloaded sorting
+  - Plugin download with manifest and WASM generation
+  - 12 tests covering marketplace operations
+
+#### HDR Merge (Mertens Exposure Fusion)
+- **Exposure fusion** for merging bracketed exposures
+  - Mertens algorithm implementation (contrast + saturation + well-exposedness)
+  - Quality metric weighting per pixel per exposure
+  - Multi-resolution pyramid blending
+  - No tone mapping needed - direct output
+- **HdrMergeSettings** with deghosting and auto-align controls
+- EV range calculation from exposure offsets
+- 8 tests including single/multi-exposure merging, validation, and weight computation
+- Tauri command `merge_hdr_photos()` for UI integration
+
+#### Panorama Stitching Foundation
+- **Panorama stitching** with projection support
+  - Perspective, Cylindrical, and Spherical projection modes
+  - Offset computation based on expected overlap percentage
+  - Linear alpha blending at seams (smooth transitions)
+  - Stitch map tracking (source index, x/y offsets)
+- **PanoramaSettings** with projection type, overlap %, blend width
+- 8 tests including single/identical image stitching, seam blending verification
+- Layout calculation for multi-image panoramas
+
+### Technical Details
+- All modules fully tested (326 total tests passing)
+- Clippy clean (warnings only, no errors)
+- Comprehensive error handling with thiserror
+- Documentation with examples and algorithm descriptions
+
 ## [0.4.0] - 2026-03-20
 
 ### Added
