@@ -1,9 +1,11 @@
 //! ocps-plugin-host — WASM Plugin Host
-//! Sandboxed plugin execution via wasmtime (Phase 6)
+//! Sandboxed plugin execution via wasmtime
 
+pub mod host;
 pub mod manifest;
 pub mod registry;
 
+pub use host::{PluginHost, PluginPermissions, PluginState};
 pub use manifest::{load_manifest, PluginError};
 pub use registry::PluginRegistry;
 

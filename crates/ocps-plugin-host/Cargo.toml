@@ -12,6 +12,8 @@ thiserror = { workspace = true }
 anyhow = { workspace = true }
 log = { workspace = true }
 toml = "0.8"
+wasmtime = { version = "25", default-features = false, features = ["runtime", "cranelift"] }
 
 [dev-dependencies]
 uuid = { workspace = true }
+wat = "1"

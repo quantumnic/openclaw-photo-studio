@@ -1,0 +1,12 @@
+[plugin]
+name = "example-lut"
+version = "1.0.0"
+api_version = "1"
+type = "image_filter"
+description = "Example LUT-based color grading plugin"
+author = "Community"
+entry_point = "plugin.wasm"
+
+[permissions]
+read_image = true
+write_image = true

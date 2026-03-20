@@ -15,6 +15,12 @@ pub enum PluginError {
     Toml(#[from] toml::de::Error),
     #[error("Invalid manifest: {0}")]
     InvalidManifest(String),
+    #[error("Plugin not found: {0}")]
+    NotFound(String),
+    #[error("Function not found: {0}")]
+    FunctionNotFound(String),
+    #[error("WASM error: {0}")]
+    WasmError(String),
 }
 
 #[derive(Debug, Clone, Deserialize)]
