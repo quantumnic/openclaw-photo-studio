@@ -1,7 +1,9 @@
 //! ocps-plugin-host — WASM Plugin Host
 //! Sandboxed plugin execution via wasmtime
 
+pub mod ai_denoise;
 pub mod api;
+pub mod face_detect;
 pub mod host;
 pub mod manifest;
 pub mod marketplace;
@@ -9,13 +11,21 @@ pub mod registry;
 pub mod sdk;
 pub mod tether;
 
+#[cfg(feature = "gphoto2-tether")]
+pub mod gphoto_provider;
+
+pub use ai_denoise::{denoise_cpu_fallback, AiDenoisePlugin, DenoiseError};
 pub use api::{PluginErrorCode, PluginType, PLUGIN_API_VERSION};
+pub use face_detect::{detect_faces_simple, FaceRegion};
 pub use host::{PluginHost, PluginPermissions, PluginState};
 pub use manifest::{load_manifest, PluginError};
 pub use marketplace::{Marketplace, MarketplaceError, MarketplacePlugin};
 pub use registry::PluginRegistry;
 pub use sdk::{generate_rust_template, generate_wat_template};
 pub use tether::{MockTetherProvider, TetherError, TetherProvider, TetherSession, TetheredCamera};
+
+#[cfg(feature = "gphoto2-tether")]
+pub use gphoto_provider::GphotoProvider;
 
 pub fn version() -> &'static str {
     env!("CARGO_PKG_VERSION")
