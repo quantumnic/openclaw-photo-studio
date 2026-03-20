@@ -9,6 +9,9 @@ pub mod metadata_template;
 pub mod models;
 pub mod search;
 
+#[cfg(test)]
+mod edge_case_tests;
+
 pub fn version() -> &'static str {
     env!("CARGO_PKG_VERSION")
 }

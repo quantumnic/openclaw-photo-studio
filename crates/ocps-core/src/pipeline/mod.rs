@@ -8,6 +8,9 @@ pub mod local_adj;
 pub mod process;
 pub mod types;
 
+#[cfg(test)]
+mod edge_case_tests;
+
 pub use types::{
     ColorGrading, ColorGradingSettings, CropSettings, CurvePoint, EditRecipe, HealingSpot,
     HslAdjustments, LensCorrections, NoiseReductionSettings, RgbImage16, RgbImage8,

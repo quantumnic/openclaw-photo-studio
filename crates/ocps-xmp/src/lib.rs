@@ -8,6 +8,9 @@ pub mod lr_preset;
 pub mod reader;
 pub mod writer;
 
+#[cfg(test)]
+mod edge_case_tests;
+
 pub fn version() -> &'static str {
     env!("CARGO_PKG_VERSION")
 }

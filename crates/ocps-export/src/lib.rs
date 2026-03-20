@@ -11,6 +11,9 @@ pub mod watermark;
 pub mod contact_sheet;
 pub mod queue;
 
+#[cfg(test)]
+mod edge_case_tests;
+
 pub use dng::export_dng;
 pub use naming::{apply_naming_template, PhotoForNaming};
 pub use color::{OutputColorSpace, embed_icc_profile, convert_linear_to_output, apply_soft_proof};
