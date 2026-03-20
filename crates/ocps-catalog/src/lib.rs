@@ -7,6 +7,7 @@ pub mod geo;
 pub mod lightroom_import;
 pub mod metadata_template;
 pub mod models;
+pub mod search;
 
 pub fn version() -> &'static str {
     env!("CARGO_PKG_VERSION")

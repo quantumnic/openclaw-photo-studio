@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Represents a single photo record in the catalog
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct PhotoRecord {
     pub id: String,
     pub file_path: String,
@@ -15,7 +15,7 @@ pub struct PhotoRecord {
     pub date_imported: String,
     pub camera_make: Option<String>,
     pub camera_model: Option<String>,
-    pub rating: u8,
+    pub rating: Option<u8>,
     pub color_label: String,
     pub flag: String,
     pub has_edits: bool,

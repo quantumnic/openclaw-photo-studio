@@ -238,7 +238,7 @@ fn cmd_list(rating: Option<u8>, flag: Option<String>, catalog_path: PathBuf) -> 
         println!(
             "{:<40} {:>6} {:>8} {:>10}",
             truncate_filename(&photo.file_name, 40),
-            "★".repeat(photo.rating as usize),
+            "★".repeat(photo.rating.unwrap_or(0) as usize),
             flag_str,
             truncate_str(date, 10)
         );

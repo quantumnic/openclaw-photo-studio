@@ -46,6 +46,11 @@ impl Catalog {
         self.path.as_deref().unwrap_or(Path::new(":memory:"))
     }
 
+    /// Get a reference to the underlying database connection
+    pub fn connection(&self) -> &Connection {
+        &self.conn
+    }
+
     fn initialize(&self) -> Result<()> {
         self.conn
             .execute_batch(crate::schema::CREATE_MIGRATIONS)?;
@@ -397,7 +402,7 @@ impl Catalog {
             date_imported: row.get(10)?,
             camera_make: row.get(11).ok(),
             camera_model: row.get(12).ok(),
-            rating: row.get::<_, i64>(20)? as u8,
+            rating: Some(row.get::<_, i64>(20)? as u8),
             color_label: row.get(21)?,
             flag: row.get(22)?,
             has_edits: row.get::<_, i64>(23)? != 0,
@@ -1316,7 +1321,7 @@ mod tests {
 
         // Verify
         let photo = catalog.get_photo(&id).unwrap().unwrap();
-        assert_eq!(photo.rating, 5);
+        assert_eq!(photo.rating, Some(5));
     }
 
     #[test]
@@ -1597,7 +1602,7 @@ mod tests {
 
         assert_eq!(copy.camera_make, Some("Canon".to_string()));
         assert_eq!(copy.camera_model, Some("EOS R5".to_string()));
-        assert_eq!(copy.rating, 5);
+        assert_eq!(copy.rating, Some(5));
     }
 
     #[test]
@@ -1622,7 +1627,7 @@ mod tests {
         // Verify all have rating 3
         for id in &ids {
             let photo = catalog.get_photo(id).unwrap().unwrap();
-            assert_eq!(photo.rating, 3);
+            assert_eq!(photo.rating, Some(3));
         }
     }
 
