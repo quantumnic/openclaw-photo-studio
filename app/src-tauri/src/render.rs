@@ -3,8 +3,9 @@
 //! This service uses the CPU pipeline to render images at preview resolution,
 //! encodes them as JPEG, and returns base64 data URIs for display in the UI.
 
+use std::collections::HashMap;
 use std::path::Path;
-use std::time::Instant;
+use std::time::{Instant, SystemTime};
 
 /// Result of rendering a photo
 #[derive(Debug, Clone, serde::Serialize)]
@@ -13,6 +14,69 @@ pub struct RenderResult {
     pub height: u32,
     pub data_uri: String, // "data:image/jpeg;base64,..."
     pub duration_ms: u64,
+}
+
+/// Cache for decoded/demosaiced images
+pub struct RenderCache {
+    decoded: HashMap<String, (ocps_core::RgbImage16, SystemTime)>,
+    max_entries: usize,
+}
+
+impl RenderCache {
+    /// Create a new render cache
+    pub fn new(max_entries: usize) -> Self {
+        Self {
+            decoded: HashMap::new(),
+            max_entries,
+        }
+    }
+
+    /// Get a cached decoded image if still valid
+    pub fn get_decoded(&self, photo_id: &str, file_modified: SystemTime) -> Option<&ocps_core::RgbImage16> {
+        if let Some((image, cached_time)) = self.decoded.get(photo_id) {
+            // Return cached image only if file hasn't been modified since cache
+            if *cached_time >= file_modified {
+                return Some(image);
+            }
+        }
+        None
+    }
+
+    /// Store a decoded image in the cache
+    pub fn store_decoded(&mut self, photo_id: String, image: ocps_core::RgbImage16, file_modified: SystemTime) {
+        // Evict oldest entry if at max capacity
+        if self.decoded.len() >= self.max_entries && !self.decoded.contains_key(&photo_id) {
+            self.evict_oldest();
+        }
+
+        self.decoded.insert(photo_id, (image, file_modified));
+    }
+
+    /// Evict the oldest entry from the cache
+    pub fn evict_oldest(&mut self) {
+        if let Some(oldest_key) = self.decoded
+            .iter()
+            .min_by_key(|(_, (_, time))| time)
+            .map(|(k, _)| k.clone())
+        {
+            self.decoded.remove(&oldest_key);
+        }
+    }
+
+    /// Clear all cached entries
+    pub fn clear(&mut self) {
+        self.decoded.clear();
+    }
+
+    /// Get current cache size
+    pub fn len(&self) -> usize {
+        self.decoded.len()
+    }
+
+    /// Check if cache is empty
+    pub fn is_empty(&self) -> bool {
+        self.decoded.is_empty()
+    }
 }
 
 /// Check if a file is a RAW format
@@ -150,6 +214,58 @@ fn encode_jpeg(data: &[u8], width: u32, height: u32, quality: u8) -> Result<Vec<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_render_cache_hit() {
+        let mut cache = RenderCache::new(10);
+        let image = ocps_core::RgbImage16::new(100, 100);
+        let modified_time = SystemTime::now();
+
+        cache.store_decoded("photo1".to_string(), image.clone(), modified_time);
+
+        let cached = cache.get_decoded("photo1", modified_time);
+        assert!(cached.is_some());
+        assert_eq!(cached.unwrap().width, 100);
+        assert_eq!(cached.unwrap().height, 100);
+    }
+
+    #[test]
+    fn test_render_cache_stale() {
+        let mut cache = RenderCache::new(10);
+        let image = ocps_core::RgbImage16::new(100, 100);
+        let old_time = SystemTime::now();
+
+        cache.store_decoded("photo1".to_string(), image.clone(), old_time);
+
+        // Query with newer timestamp (file modified after cache)
+        let newer_time = SystemTime::now();
+        let cached = cache.get_decoded("photo1", newer_time);
+        assert!(cached.is_none());
+    }
+
+    #[test]
+    fn test_render_cache_eviction() {
+        let mut cache = RenderCache::new(3);
+        let image = ocps_core::RgbImage16::new(10, 10);
+        let time = SystemTime::now();
+
+        // Fill cache
+        cache.store_decoded("photo1".to_string(), image.clone(), time);
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        cache.store_decoded("photo2".to_string(), image.clone(), SystemTime::now());
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        cache.store_decoded("photo3".to_string(), image.clone(), SystemTime::now());
+
+        assert_eq!(cache.len(), 3);
+
+        // Add one more - should evict oldest (photo1)
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        cache.store_decoded("photo4".to_string(), image.clone(), SystemTime::now());
+
+        assert_eq!(cache.len(), 3);
+        assert!(cache.get_decoded("photo1", time).is_none());
+        assert!(cache.get_decoded("photo2", time).is_some() || cache.get_decoded("photo3", time).is_some());
+    }
 
     #[test]
     fn test_render_synthetic_image() {

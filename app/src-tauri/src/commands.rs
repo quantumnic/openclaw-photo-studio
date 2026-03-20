@@ -86,6 +86,7 @@ pub struct AppState {
     pub plugin_registry: Mutex<ocps_plugin_host::PluginRegistry>,
     pub preview_cache: Mutex<ocps_core::preview_cache::PreviewCache>,
     pub histories: Mutex<std::collections::HashMap<String, ocps_core::EditHistory>>,
+    pub render_cache: Mutex<crate::render::RenderCache>,
 }
 
 impl AppState {
@@ -123,6 +124,7 @@ impl AppState {
             plugin_registry: Mutex::new(plugin_registry),
             preview_cache: Mutex::new(preview_cache),
             histories: Mutex::new(std::collections::HashMap::new()),
+            render_cache: Mutex::new(crate::render::RenderCache::new(10)),
         }
     }
 }
