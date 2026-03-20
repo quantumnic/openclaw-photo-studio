@@ -7,6 +7,7 @@
 use std::path::Path;
 use thiserror::Error;
 
+pub mod camera_profiles;
 pub mod demosaic;
 pub mod thumbnail;
 
