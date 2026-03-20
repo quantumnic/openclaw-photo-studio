@@ -295,8 +295,7 @@ fn blend_with_mask(
     height: u32,
 ) {
     let pixels = (width * height) as usize;
-    for i in 0..pixels {
-        let mask_value = mask[i];
+    for (i, &mask_value) in mask.iter().enumerate().take(pixels) {
         let inv_mask = 1.0 - mask_value;
 
         // Blend RGB channels

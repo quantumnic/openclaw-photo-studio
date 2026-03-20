@@ -17,11 +17,13 @@ pub struct RenderResult {
 }
 
 /// Cache for decoded/demosaiced images
+#[allow(dead_code)]
 pub struct RenderCache {
     decoded: HashMap<String, (ocps_core::RgbImage16, SystemTime)>,
     max_entries: usize,
 }
 
+#[allow(dead_code)]
 impl RenderCache {
     /// Create a new render cache
     pub fn new(max_entries: usize) -> Self {

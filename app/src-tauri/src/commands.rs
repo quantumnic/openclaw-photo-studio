@@ -88,6 +88,7 @@ pub struct AppState {
     pub marketplace: Mutex<ocps_plugin_host::Marketplace>,
     pub preview_cache: Mutex<ocps_core::preview_cache::PreviewCache>,
     pub histories: Mutex<std::collections::HashMap<String, ocps_core::EditHistory>>,
+    #[allow(dead_code)]
     pub render_cache: Mutex<crate::render::RenderCache>,
     pub tether_provider: Mutex<Box<dyn ocps_plugin_host::TetherProvider>>,
 }
