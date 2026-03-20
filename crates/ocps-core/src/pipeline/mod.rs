@@ -3,9 +3,10 @@
 //! Output: RGB Vec<u8> (8-bit sRGB for display/export)
 
 pub mod color;
+pub mod lens;
+pub mod local_adj;
 pub mod process;
 pub mod types;
-pub mod lens;
 
 pub use types::{
     ColorGrading, ColorGradingSettings, CropSettings, CurvePoint, EditRecipe, HealingSpot,
@@ -136,12 +137,17 @@ impl ImageProcessor {
             );
         }
 
+        // Step 8.5: Local adjustments (after global adjustments, before crop)
+        if !recipe.local_adjustments.is_empty() {
+            local_adj::apply_local_adjustments(&mut working, &recipe.local_adjustments);
+        }
+
         // Step 9: Crop (geometric transformation, done before output)
         if !recipe.crop.is_identity() {
             working = apply_crop(&working, &recipe.crop);
         }
 
-        // Step 9: Convert to 8-bit sRGB for output
+        // Step 10: Convert to 8-bit sRGB for output
         Self::convert_to_u8(&working)
     }
 
