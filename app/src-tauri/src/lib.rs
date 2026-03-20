@@ -69,6 +69,7 @@ pub fn run() {
             commands::undo_edit,
             commands::redo_edit,
             commands::get_edit_history,
+            commands::get_display_info,
         ])
         .setup(|app| {
             #[cfg(debug_assertions)]

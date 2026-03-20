@@ -1,5 +1,6 @@
 use std::sync::Mutex;
 use tauri::State;
+use serde::{Deserialize, Serialize};
 
 /// Standard error type for all Tauri commands
 #[derive(Debug, serde::Serialize)]
@@ -2224,4 +2225,35 @@ pub fn get_edit_history(state: State<AppState>, photo_id: String) -> Result<Vec<
         .collect();
 
     Ok(entries)
+}
+
+// ===== DISPLAY MANAGEMENT =====
+
+/// Display information for second monitor support
+#[derive(Debug, Serialize, Deserialize)]
+pub struct DisplayInfo {
+    pub display_count: usize,
+    pub primary: DisplayDimensions,
+    pub secondary: Option<DisplayDimensions>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct DisplayDimensions {
+    pub width: u32,
+    pub height: u32,
+}
+
+/// Get display information (for second monitor support)
+#[tauri::command]
+pub fn get_display_info() -> Result<DisplayInfo, CommandError> {
+    // Stub implementation - returns basic info
+    // In production, would use Tauri window APIs to enumerate displays
+    Ok(DisplayInfo {
+        display_count: 1,
+        primary: DisplayDimensions {
+            width: 1920,
+            height: 1080,
+        },
+        secondary: None,
+    })
 }
