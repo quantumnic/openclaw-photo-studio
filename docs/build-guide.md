@@ -250,14 +250,103 @@ Generates HTML report at `target/criterion/report/index.html`.
 
 ## Troubleshooting
 
-### Problem: "rustc version mismatch"
+### Common Build Issues
+
+#### "cargo build fails with 'linker not found'"
+
+**Cause:** Missing C/C++ compiler toolchain.
+
+**Solution (macOS):**
+```bash
+xcode-select --install
+```
+
+**Solution (Linux - Debian/Ubuntu):**
+```bash
+sudo apt-get install build-essential
+```
+
+**Solution (Linux - Fedora/RHEL):**
+```bash
+sudo dnf groupinstall "Development Tools"
+```
+
+**Solution (Windows):**
+- Download and install [Visual Studio Build Tools 2022](https://visualstudio.microsoft.com/downloads/)
+- Select "Desktop development with C++" workload
+
+---
+
+#### "pnpm tauri dev shows blank window"
+
+**Cause:** WebView2 not installed (Windows) or frontend build failed.
+
+**Solution (Windows 10):**
+- Install [WebView2 Runtime](https://developer.microsoft.com/en-us/microsoft-edge/webview2/)
+- Windows 11 includes this by default
+
+**Solution (All platforms):**
+1. Check the terminal for JavaScript errors
+2. Try rebuilding frontend:
+   ```bash
+   cd app
+   rm -rf node_modules dist
+   pnpm install
+   pnpm tauri dev
+   ```
+
+---
+
+#### "tests fail on Linux"
+
+**Cause:** Missing GTK3 development libraries.
+
+**Solution (Debian/Ubuntu):**
+```bash
+sudo apt-get install libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev
+```
+
+**Solution (Fedora/RHEL):**
+```bash
+sudo dnf install gtk3-devel webkit2gtk4.1-devel libappindicator-gtk3-devel
+```
+
+---
+
+#### "disk full during build"
+
+**Cause:** Rust `target/` directory can grow to 5-10GB during builds.
+
+**Solution:**
+```bash
+# Clean build artifacts
+cargo clean
+
+# Or remove specific profiles
+rm -rf target/debug
+rm -rf target/release
+
+# Or clean entire workspace
+git clean -fdx  # WARNING: Removes all untracked files!
+```
+
+**Prevention:**
+- Use `cargo clean` regularly during development
+- Add `target/` to backup exclusions
+- Consider using `sccache` for faster rebuilds
+
+---
+
+### Additional Troubleshooting
+
+#### Problem: "rustc version mismatch"
 **Solution:**
 ```bash
 rustup update stable
 rustup default stable
 ```
 
-### Problem: "failed to load plugin `typescript`"
+#### Problem: "failed to load plugin `typescript`"
 **Solution:**
 ```bash
 cd app
@@ -265,25 +354,25 @@ rm -rf node_modules pnpm-lock.yaml
 pnpm install
 ```
 
-### Problem: "dyld: Library not loaded" (macOS)
+#### Problem: "dyld: Library not loaded" (macOS)
 **Solution:** Reinstall Xcode Command Line Tools:
 ```bash
 sudo rm -rf /Library/Developer/CommandLineTools
 xcode-select --install
 ```
 
-### Problem: "webkit2gtk not found" (Linux)
+#### Problem: "webkit2gtk not found" (Linux)
 **Solution:**
 ```bash
 sudo apt-get install libwebkit2gtk-4.1-dev
 ```
 
-### Problem: Build takes forever (Windows)
+#### Problem: Build takes forever (Windows)
 **Solution:**
 - Disable Windows Defender real-time scanning for project folder
 - Add `target/` to exclusion list
 
-### Problem: Out of memory during build
+#### Problem: Out of memory during build
 **Solution:** Reduce parallel jobs:
 ```bash
 cargo build --release -j 2

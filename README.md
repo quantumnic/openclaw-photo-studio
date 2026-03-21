@@ -77,38 +77,54 @@ OpenClaw Photo Studio (OCPS) is a professional photo workflow application for RA
 ## Quick Start
 
 ### Requirements
-- Rust 1.78+ (stable)
-- Node.js 20+
-- pnpm 9+
-- GPU with Vulkan, Metal, or DirectX 12 support
+- **Rust 1.78+** (stable) — Install via [rustup](https://rustup.rs/)
+- **Node.js 20+** — Install via [nvm](https://github.com/nvm-sh/nvm) or [nodejs.org](https://nodejs.org/)
+- **pnpm 9+** — Install via `npm install -g pnpm`
+- **Platform dependencies:**
+  - **macOS:** Xcode Command Line Tools (`xcode-select --install`)
+  - **Linux:** `libgtk-3-dev libwebkit2gtk-4.1-dev` (see [build guide](docs/build-guide.md))
+  - **Windows:** Visual Studio Build Tools 2022 + WebView2
 
 ### Build from Source
 
 ```bash
-# Clone
-git clone https://github.com/openclaw/photo-studio.git
-cd photo-studio
+# Clone the repository
+git clone https://github.com/quantumnic/openclaw-photo-studio.git
+cd openclaw-photo-studio
 
-# Install dependencies
+# Install frontend dependencies
+cd app
 pnpm install
 
-# Build and run
-cargo tauri dev
+# Build and run in development mode
+pnpm tauri dev
 ```
+
+**First build:** Expect 3-5 minutes (Rust compiles dependencies).
+**Subsequent builds:** 10-30 seconds (incremental compilation).
+
+**Troubleshooting:** See [Build Guide](docs/build-guide.md) for common issues.
 
 ### Download Binaries
 
-> *Coming with v1.0 release*
+> Pre-built binaries coming with v1.0 stable release. For now, build from source.
 
 ## Documentation
 
-- [Architecture](docs/architecture.md)
-- [Build Guide](docs/build-guide.md)
-- [Plugin Development](docs/plugin-dev-guide.md)
-- [Preset Format](docs/preset-format.md)
-- [XMP Compatibility](docs/xmp-compatibility.md)
-- [Shortcut Reference](docs/shortcuts.md)
-- [FAQ](docs/faq.md)
+### For Users
+- [User Guide](docs/user-guide.md) — Complete guide to using OCPS
+- [Keyboard Shortcuts](docs/concept/SHORTCUTS.md) — Full shortcut reference
+
+### For Developers
+- [Architecture](docs/architecture.md) — System design and data flow
+- [Build Guide](docs/build-guide.md) — Building from source
+- [Plugin Development](docs/plugin-guide.md) — Create custom plugins
+- [Contributing](CONTRIBUTING.md) — How to contribute
+
+### Advanced Topics
+- [Roadmap](docs/concept/ROADMAP.md) — Development timeline and phases
+- [Copy/Paste Spec](docs/concept/COPY-PASTE-SPEC.md) — Edit workflow design
+- [Phase 1 Summary](docs/implementation/PHASE1-DAY71-90-SUMMARY.md) — Implementation details
 
 ## Contributing
 
@@ -122,16 +138,27 @@ We welcome contributions! Please read:
 
 ## License
 
-OpenClaw Photo Studio is licensed under the **PolyForm Noncommercial License 1.0.0**.
+OpenClaw Photo Studio is **source-available** under the **PolyForm Noncommercial License 1.0.0**.
 
-- ✅ Free for personal use, learning, research, and non-commercial work
-- ✅ Free for professional photographers using the software to edit their own photos
-- ✅ Free for community development and non-commercial forks
-- ❌ Not free for embedding in commercial software, SaaS, OEM, or white-label products
+### What's Allowed
+- ✅ **Personal use** — Edit your own photos, manage your library
+- ✅ **Professional use** — Photographers can use OCPS for client work
+- ✅ **Learning & research** — Study the code, learn from implementation
+- ✅ **Community development** — Contribute improvements, fix bugs
+- ✅ **Non-commercial forks** — Create custom versions for personal/community use
+- ✅ **Plugin development** — Create and sell commercial plugins independently
 
-For commercial licensing, see [COMMERCIAL.md](COMMERCIAL.md) or contact licensing@openclaw.photo.
+### What's Not Allowed
+- ❌ **Commercial embedding** — Cannot embed OCPS in commercial software products
+- ❌ **SaaS offerings** — Cannot offer OCPS as a hosted service
+- ❌ **OEM/white-label** — Cannot rebrand and resell OCPS
+- ❌ **Proprietary forks** — Cannot create closed-source commercial derivatives
 
-**This is source-available software, not "open source" as defined by the OSI.**
+### Commercial Licensing
+
+For commercial use cases (embedding, SaaS, OEM), contact licensing@openclaw.photo or see [COMMERCIAL.md](COMMERCIAL.md).
+
+**Important:** This is **NOT** "open source" as defined by the OSI. The source code is publicly available for transparency and community development, but commercial use requires a separate license.
 
 ## FAQ
 
@@ -164,16 +191,34 @@ OCPS builds on the shoulders of excellent open-source projects:
 
 ## Current Status
 
-**v0.2.0 Alpha** — Core pipeline complete, 200+ tests passing.
+**v0.9.0 Release Candidate** — Core features complete, extensive testing in progress.
 
-✅ RAW decode, demosaic, CPU pipeline operational
-✅ Full develop module with all basic adjustments
-✅ Catalog, import, search, collections working
-✅ Copy/Paste, presets, batch export functional
-✅ XMP sidecar read/write, Lightroom import operational
-🚧 GPU rendering (Phase 3) — performance optimization in progress
-🚧 Local adjustments (Phase 5) — masks and selective editing coming
-🚧 Tethering (Phase 7) — camera capture support planned
+### Completed (Phase 1-2)
+✅ **RAW Processing:** Decode and demosaic (ARW, NEF, RAF, DNG, CR2, ORF, RW2)
+✅ **Image Pipeline:** Full CPU-based processing (WB, exposure, tone, clarity, saturation)
+✅ **Catalog System:** SQLite catalog with FTS5 search, 100k+ photo support
+✅ **Library Module:** Grid, Loupe, Compare, Survey views with keyboard navigation
+✅ **Rating & Flagging:** 0-5 stars, pick/reject flags, color labels
+✅ **Collections:** Manual and smart collections with rule-based filtering
+✅ **Develop Module:** Non-destructive editing with history and snapshots
+✅ **Copy/Paste Workflow:** 2-keystroke edit transfer across photos
+✅ **Export:** JPEG, PNG with quality/resize options and batch processing
+✅ **XMP Compatibility:** Read/write Adobe-compatible XMP sidecars
+✅ **Keyboard Shortcuts:** 100+ shortcuts, command palette, customizable
+✅ **Test Coverage:** 200+ tests passing (unit + integration)
+
+### In Progress (Phase 3)
+🚧 **GPU Pipeline:** wgpu-based acceleration for real-time performance
+🚧 **Smart Previews:** Compressed proxies for faster editing
+🚧 **Performance:** Rayon parallelization, optimized algorithms
+
+### Planned (Phase 4-9)
+📋 **Local Adjustments:** Brushes, gradients, radial filters (Phase 5)
+📋 **Lens Corrections:** Distortion, vignetting, chromatic aberration (Phase 5)
+📋 **Plugin System:** WASM-based extensibility (Phase 6)
+📋 **Tethering:** Camera capture support (Phase 7)
+📋 **Print Module:** Layout and printing (Phase 8)
+📋 **AI Features:** Denoise, face detection, auto-keywording (Phase 9)
 
 ---
 

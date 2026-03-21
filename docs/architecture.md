@@ -207,6 +207,161 @@ ocps export all --output ./exports --quality 90 --resize 2048
 
 ## Data Flow
 
+### RAW File Processing Pipeline
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    RAW File (e.g., .ARW)                     │
+└──────────────────────┬──────────────────────────────────────┘
+                       │
+                       ▼
+┌─────────────────────────────────────────────────────────────┐
+│  Step 1: DECODE (ocps-core/raw)                              │
+│  • Read RAW file metadata (EXIF, white balance, etc.)        │
+│  • Extract Bayer/X-Trans sensor data (CFA pattern)           │
+│  • Output: RawImage (sensor data + metadata)                 │
+└──────────────────────┬──────────────────────────────────────┘
+                       │
+                       ▼
+┌─────────────────────────────────────────────────────────────┐
+│  Step 2: DEMOSAIC (ocps-core/demosaic)                       │
+│  • Convert Bayer pattern → RGB                               │
+│  • Algorithm: Bilinear (Phase 1) or AMaZE (Phase 2)          │
+│  • Output: RgbImage8 (u8 RGB)                                │
+└──────────────────────┬──────────────────────────────────────┘
+                       │
+                       ▼
+┌─────────────────────────────────────────────────────────────┐
+│  Step 3: PIPELINE (ocps-core/pipeline)                       │
+│  • Convert u8 → u16 linear RGB (working space)               │
+│  • Apply EditRecipe:                                         │
+│    1. White Balance (temp + tint)                            │
+│    2. Exposure (-5 to +5 EV)                                 │
+│    3. Contrast, Highlights, Shadows, Whites, Blacks          │
+│    4. Tone adjustments                                       │
+│    5. Clarity (local contrast)                               │
+│    6. Vibrance & Saturation (HSV)                            │
+│    7. Sharpening (unsharp mask)                              │
+│    8. Crop (normalized coordinates)                          │
+│  • Gamma encode (linear → sRGB)                              │
+│  • Output: RgbImage8 (u8 sRGB) ready for display/export      │
+└──────────────────────┬──────────────────────────────────────┘
+                       │
+                       ▼
+┌─────────────────────────────────────────────────────────────┐
+│  Step 4: DISPLAY / EXPORT                                    │
+│  • Display: Render to UI (frontend canvas/img element)       │
+│  • Export: Encode to JPEG/PNG/TIFF (ocps-export)             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Catalog Architecture
+
+```
+┌───────────────────────────────────────────────────────────────┐
+│                      File System                               │
+│  /Users/photos/2024/                                          │
+│    ├── IMG_0001.ARW ←───────────────┐                         │
+│    ├── IMG_0001.ARW.xmp              │ (XMP sidecar)          │
+│    ├── IMG_0002.NEF ←──────────┐    │                         │
+│    └── IMG_0002.NEF.xmp        │    │                         │
+└────────────────────────────────┼────┼─────────────────────────┘
+                                 │    │
+                                 │    │ (file path reference)
+                                 │    │
+┌────────────────────────────────┼────┼─────────────────────────┐
+│           SQLite Catalog (catalog.ocps)                        │
+│                                │    │                          │
+│  ┌─────────────────────────────▼────▼──────────────────────┐  │
+│  │  photos table                                            │  │
+│  │  ├─ id (UUID primary key)                                │  │
+│  │  ├─ file_path (indexed) ──────────┘                      │  │
+│  │  ├─ sha256_hash (deduplication)                          │  │
+│  │  ├─ rating, flag, color_label                            │  │
+│  │  ├─ camera_make, camera_model, lens_model               │  │
+│  │  ├─ width, height, date_taken, date_imported            │  │
+│  │  └─ has_edits (boolean flag)                             │  │
+│  └──────────────────────────────────────────────────────────┘  │
+│                                                                 │
+│  ┌──────────────────────────────────────────────────────────┐  │
+│  │  edits table (non-destructive edit history)              │  │
+│  │  ├─ id                                                    │  │
+│  │  ├─ photo_id (foreign key → photos.id)                   │  │
+│  │  ├─ edit_data (JSON: EditRecipe serialized)              │  │
+│  │  ├─ created_at, updated_at                               │  │
+│  │  └─ is_current (boolean)                                 │  │
+│  └──────────────────────────────────────────────────────────┘  │
+│                                                                 │
+│  ┌──────────────────────────────────────────────────────────┐  │
+│  │  collections table                                        │  │
+│  │  ├─ id, name, type (manual/smart)                        │  │
+│  │  └─ smart_rules (JSON for smart collections)             │  │
+│  └──────────────────────────────────────────────────────────┘  │
+│                                                                 │
+│  ┌──────────────────────────────────────────────────────────┐  │
+│  │  photo_collections (many-to-many)                         │  │
+│  │  ├─ photo_id                                              │  │
+│  │  └─ collection_id                                         │  │
+│  └──────────────────────────────────────────────────────────┘  │
+│                                                                 │
+│  ┌──────────────────────────────────────────────────────────┐  │
+│  │  keywords table (hierarchical)                            │  │
+│  │  ├─ id, name, parent_id (self-reference)                 │  │
+│  │  └─ path (e.g., "Nature/Birds/Eagles")                   │  │
+│  └──────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### IPC Communication (Frontend ↔ Tauri ↔ Rust)
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Frontend (SolidJS + TypeScript)                             │
+│  • User clicks "Import Folder"                               │
+│  • Button handler calls:                                     │
+│    invoke("import_folder", { path: "/Users/photos" })       │
+└──────────────────────┬──────────────────────────────────────┘
+                       │ IPC (JSON-RPC over WebSocket/IPC)
+                       ▼
+┌─────────────────────────────────────────────────────────────┐
+│  Tauri Backend (Rust)                                        │
+│  • Command handler receives message                          │
+│  • Deserializes JSON → Rust types                            │
+│    #[tauri::command]                                         │
+│    fn import_folder(path: String) -> Result<ImportResult>   │
+└──────────────────────┬──────────────────────────────────────┘
+                       │ Direct function call
+                       ▼
+┌─────────────────────────────────────────────────────────────┐
+│  Core Crates (Business Logic)                                │
+│  • ocps-catalog::import_folder(path)                         │
+│    - Walk directory recursively                              │
+│    - Filter by extension (.arw, .nef, etc.)                  │
+│    - For each file:                                          │
+│      → Calculate SHA-256 hash                                │
+│      → Check for duplicates                                  │
+│      → ocps-xmp::extract_exif(path)                          │
+│      → Insert into SQLite                                    │
+│      → Generate thumbnail preview                            │
+│  • Returns: ImportResult { total, inserted, skipped, errors }│
+└──────────────────────┬──────────────────────────────────────┘
+                       │ Return value (Rust type)
+                       ▼
+┌─────────────────────────────────────────────────────────────┐
+│  Tauri Backend                                               │
+│  • Serializes ImportResult → JSON                            │
+│  • Sends response over IPC                                   │
+└──────────────────────┬──────────────────────────────────────┘
+                       │ IPC Response
+                       ▼
+┌─────────────────────────────────────────────────────────────┐
+│  Frontend                                                     │
+│  • Receives JSON response                                    │
+│  • Updates UI state (photo grid refreshes)                   │
+│  • Shows toast: "Imported 47 photos in 2.3s"                 │
+└─────────────────────────────────────────────────────────────┘
+```
+
 ### Import Workflow
 ```
 User selects folder
