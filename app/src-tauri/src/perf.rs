@@ -22,10 +22,12 @@ pub struct PerfStats {
     pub max_ms: u64,
 }
 
+type PerfStatsMap = HashMap<String, (u64, u64, u64, u64)>; // (count, total, min, max)
+
 #[derive(Debug, Clone)]
 pub struct PerfTracker {
     events: Arc<Mutex<Vec<PerfEvent>>>,
-    stats: Arc<Mutex<HashMap<String, (u64, u64, u64, u64)>>>, // (count, total, min, max)
+    stats: Arc<Mutex<PerfStatsMap>>,
 }
 
 impl PerfTracker {
@@ -37,7 +39,8 @@ impl PerfTracker {
     }
 
     /// Record a timed operation
-    pub fn record<F, R>(label: &str, f: F) -> (R, u64)
+    #[allow(dead_code)]
+    pub fn record<F, R>(_label: &str, f: F) -> (R, u64)
     where
         F: FnOnce() -> R,
     {
@@ -48,6 +51,7 @@ impl PerfTracker {
     }
 
     /// Record an event with timing
+    #[allow(dead_code)]
     pub fn record_event(&self, label: &str, duration_ms: u64) {
         let event = PerfEvent {
             label: label.to_string(),

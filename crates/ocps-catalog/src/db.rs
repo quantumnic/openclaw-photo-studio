@@ -20,7 +20,13 @@ impl Catalog {
     /// Open or create a catalog at the given path
     pub fn open(path: &Path) -> Result<Self> {
         let conn = Connection::open(path)?;
-        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
+        conn.execute_batch(
+            "PRAGMA journal_mode=WAL; \
+             PRAGMA foreign_keys=ON; \
+             PRAGMA cache_size=-16000; \
+             PRAGMA temp_store=MEMORY; \
+             PRAGMA mmap_size=268435456;"
+        )?;
         let catalog = Self {
             conn,
             path: Some(path.to_path_buf()),
@@ -32,7 +38,11 @@ impl Catalog {
     /// Create an in-memory catalog (for testing)
     pub fn in_memory() -> Result<Self> {
         let conn = Connection::open_in_memory()?;
-        conn.execute_batch("PRAGMA foreign_keys=ON;")?;
+        conn.execute_batch(
+            "PRAGMA foreign_keys=ON; \
+             PRAGMA cache_size=-16000; \
+             PRAGMA temp_store=MEMORY;"
+        )?;
         let catalog = Self {
             conn,
             path: None,
@@ -1892,5 +1902,87 @@ mod tests {
 
         // Verify data is still intact
         assert!(catalog.photo_count().unwrap() > 0);
+    }
+
+    #[test]
+    fn test_sqlite_pragmas_set() {
+        use std::env;
+
+        // Test in-memory catalog
+        let catalog_mem = Catalog::in_memory().unwrap();
+
+        // Verify foreign_keys is ON (returns integer: 0=off, 1=on)
+        let foreign_keys: i64 = catalog_mem.conn.query_row(
+            "PRAGMA foreign_keys",
+            [],
+            |row| row.get(0),
+        ).unwrap();
+        assert_eq!(foreign_keys, 1, "foreign_keys should be enabled");
+
+        // Verify cache_size is set to -16000 (16MB)
+        let cache_size: i64 = catalog_mem.conn.query_row(
+            "PRAGMA cache_size",
+            [],
+            |row| row.get(0),
+        ).unwrap();
+        assert_eq!(cache_size, -16000, "cache_size should be -16000 (16MB)");
+
+        // Verify temp_store is MEMORY (2)
+        let temp_store: i64 = catalog_mem.conn.query_row(
+            "PRAGMA temp_store",
+            [],
+            |row| row.get(0),
+        ).unwrap();
+        assert_eq!(temp_store, 2, "temp_store should be MEMORY (2)");
+
+        // Test file-based catalog
+        let temp_dir = env::temp_dir();
+        let catalog_path = temp_dir.join(format!("test_pragmas_{}.db", Uuid::new_v4()));
+
+        let catalog_file = Catalog::open(&catalog_path).unwrap();
+
+        // Verify WAL mode
+        let journal_mode: String = catalog_file.conn.query_row(
+            "PRAGMA journal_mode",
+            [],
+            |row| row.get(0),
+        ).unwrap();
+        assert_eq!(journal_mode.to_lowercase(), "wal", "journal_mode should be WAL");
+
+        // Verify foreign_keys is ON (returns integer: 0=off, 1=on)
+        let foreign_keys: i64 = catalog_file.conn.query_row(
+            "PRAGMA foreign_keys",
+            [],
+            |row| row.get(0),
+        ).unwrap();
+        assert_eq!(foreign_keys, 1, "foreign_keys should be enabled");
+
+        // Verify cache_size
+        let cache_size: i64 = catalog_file.conn.query_row(
+            "PRAGMA cache_size",
+            [],
+            |row| row.get(0),
+        ).unwrap();
+        assert_eq!(cache_size, -16000, "cache_size should be -16000 (16MB)");
+
+        // Verify temp_store
+        let temp_store: i64 = catalog_file.conn.query_row(
+            "PRAGMA temp_store",
+            [],
+            |row| row.get(0),
+        ).unwrap();
+        assert_eq!(temp_store, 2, "temp_store should be MEMORY (2)");
+
+        // Verify mmap_size (256MB = 268435456 bytes)
+        let mmap_size: i64 = catalog_file.conn.query_row(
+            "PRAGMA mmap_size",
+            [],
+            |row| row.get(0),
+        ).unwrap();
+        assert_eq!(mmap_size, 268435456, "mmap_size should be 256MB (268435456 bytes)");
+
+        // Clean up
+        drop(catalog_file);
+        let _ = std::fs::remove_file(catalog_path);
     }
 }

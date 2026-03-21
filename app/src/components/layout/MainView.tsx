@@ -24,7 +24,7 @@ interface MainViewProps {
 
 export function MainView(props: MainViewProps) {
   return (
-    <main class="flex-1 overflow-hidden bg-[#141414] relative">
+    <main id="main-content" class="flex-1 overflow-hidden bg-[#141414] relative">
       {props.module === "library" && (
         <LibraryView
           viewMode={props.viewMode}
@@ -818,6 +818,7 @@ function DevelopView(props: DevelopViewProps) {
           onClick={zoomOut}
           class="text-xs px-2 py-0.5 text-[#666] hover:text-[#999] rounded hover:bg-[#2a2a2a]"
           title="Zoom Out (Cmd+-)"
+          aria-label="Zoom Out"
         >
           −
         </button>
@@ -832,6 +833,7 @@ function DevelopView(props: DevelopViewProps) {
           onClick={zoomIn}
           class="text-xs px-2 py-0.5 text-[#666] hover:text-[#999] rounded hover:bg-[#2a2a2a]"
           title="Zoom In (Cmd+=)"
+          aria-label="Zoom In"
         >
           +
         </button>

@@ -40,6 +40,7 @@ export function CompareView(props: CompareViewProps) {
         <button
           onClick={props.onSwap}
           class="px-3 py-1 bg-[#2a2a2a] hover:bg-[#3a3a3a] text-[#aaa] rounded text-xs transition-colors"
+          aria-label="Swap photos"
         >
           ⇄ Swap
         </button>
