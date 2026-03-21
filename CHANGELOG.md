@@ -5,6 +5,27 @@ All notable changes to OpenClaw Photo Studio will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] - 2026-03-21
+
+### Added
+- 430+ comprehensive test suite including edge case tests
+- SQLite memory optimizations (16MB cache, memory temp storage, 256MB mmap)
+- Accessibility improvements (WCAG AA color contrast, skip-to-content, aria-labels)
+- Complete user guide and plugin development guide
+- Architecture documentation with ASCII diagrams
+- Error recovery tests for RAW decoding and batch exports
+
+### Fixed
+- Memory optimization in catalog operations
+- Color contrast for text-muted (WCAG AA compliance)
+- All clippy warnings resolved
+- Build warnings in release mode
+
+### Improved
+- Documentation structure and completeness
+- Build troubleshooting guide
+- README with v0.9.0 feature list
+
 ## [0.8.0] - 2026-03-20
 
 ### Added

@@ -1,6 +1,6 @@
 [package]
 name = "ocps-app"
-version = "0.4.0"
+version = "0.9.0"
 edition = "2021"
 description = "OpenClaw Photo Studio — Desktop application"
 license = "LicenseRef-PolyForm-Noncommercial-1.0.0"
