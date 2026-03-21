@@ -27,9 +27,19 @@ mod edge_cases {
         let result = jpeg::export_jpeg(&image_data, 10, 10, 85, &export_path);
 
         // Should either create directory or fail with clear error
-        assert!(result.is_ok() || result.is_err());
-
-        if result.is_ok() {
+        // Most importantly, should not panic
+        if result.is_err() {
+            // If it fails, the error should be clear (e.g., "No such file or directory")
+            let err = result.unwrap_err();
+            let err_msg = err.to_string();
+            assert!(
+                err_msg.contains("No such file") ||
+                err_msg.contains("directory") ||
+                err_msg.contains("not found"),
+                "Error should be descriptive: {}", err_msg
+            );
+        } else {
+            // If it succeeds, the directory and file should exist
             assert!(export_path.exists());
         }
     }
@@ -188,5 +198,78 @@ mod edge_cases {
 
         // Should either succeed or fail gracefully
         assert!(result.is_ok() || result.is_err());
+    }
+
+    #[test]
+    fn test_export_batch_continues_on_error() {
+        use crate::queue::{ExportJob, ExportQueue, JobStatus};
+        use chrono::Utc;
+        use std::path::PathBuf;
+
+        let temp_dir = TempDir::new().unwrap();
+        let mut queue = ExportQueue::with_max_retries(0); // Disable auto-retry for this test
+
+        // Create 5 jobs: job1-job5
+        // We'll simulate job3 failing due to invalid photo_id
+        let jobs: Vec<ExportJob> = (1..=5).map(|i| {
+            ExportJob {
+                id: format!("job{}", i),
+                photo_id: format!("photo_{}", i),
+                settings: serde_json::json!({"quality": 85}),
+                output_path: temp_dir.path().join(format!("output_{}.jpg", i)),
+                status: JobStatus::Pending,
+                retry_count: 0,
+                error: None,
+                created_at: Utc::now(),
+                completed_at: None,
+            }
+        }).collect();
+
+        // Enqueue all jobs
+        for job in jobs {
+            queue.enqueue(job);
+        }
+
+        // Simulate batch processing with one failure
+        let mut processed_count = 0;
+        let mut success_count = 0;
+        let mut failure_count = 0;
+
+        while let Some(job) = queue.next_job() {
+            processed_count += 1;
+
+            // Simulate job3 failing (invalid photo_id scenario)
+            if job.id == "job3" {
+                queue.mark_failed(&job.id, "Invalid photo_id: photo not found in catalog".to_string()).unwrap();
+                failure_count += 1;
+            } else {
+                // Other jobs succeed
+                queue.mark_completed(&job.id).unwrap();
+                success_count += 1;
+            }
+        }
+
+        // Verify batch continued despite one failure
+        assert_eq!(processed_count, 5, "Should process all 5 jobs");
+        assert_eq!(success_count, 4, "Should have 4 successful jobs");
+        assert_eq!(failure_count, 1, "Should have 1 failed job");
+
+        // Verify queue status
+        let status = queue.status();
+        assert_eq!(status.completed, 4, "Should have 4 completed jobs");
+        assert_eq!(status.failed, 1, "Should have 1 failed job");
+        assert_eq!(status.pending, 0, "Should have no pending jobs");
+        assert!(!status.is_running, "Should not be running");
+
+        // Verify failed job has error message
+        let failed_jobs = queue.failed_jobs();
+        assert_eq!(failed_jobs.len(), 1);
+        assert_eq!(failed_jobs[0].id, "job3");
+        assert!(failed_jobs[0].error.is_some());
+        assert!(failed_jobs[0].error.as_ref().unwrap().contains("Invalid photo_id"));
+
+        // Verify successful jobs are marked completed
+        let completed_jobs = queue.completed_jobs();
+        assert_eq!(completed_jobs.len(), 4);
     }
 }

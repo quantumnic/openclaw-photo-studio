@@ -635,4 +635,69 @@ mod tests {
         let desc = EditHistory::auto_describe(&old, &old);
         assert_eq!(desc, "Edit");
     }
+
+    #[test]
+    fn test_history_1000_pushes_respects_max_entries() {
+        // Edge case: ensure history doesn't grow beyond max_entries even after 1000 pushes
+        let mut recipe = EditRecipe::default();
+        let mut history = EditHistory::new(recipe.clone());
+
+        // Push 1000 entries
+        for i in 1..=1000 {
+            recipe.exposure = i as f32;
+            history.push(recipe.clone(), format!("State {}", i));
+        }
+
+        // Should still only have max_entries (50)
+        assert_eq!(history.entries.len(), 50);
+        assert_eq!(history.current_index, 49);
+
+        // The oldest entries should have been removed
+        // First entry should be state 951 (1000 - 50 + 1)
+        assert_eq!(history.entries[0].recipe.exposure, 951.0);
+        // Last entry should be state 1000
+        assert_eq!(history.entries[49].recipe.exposure, 1000.0);
+    }
+
+    #[test]
+    fn test_paste_on_empty_clipboard() {
+        // Edge case: pasting when clipboard is conceptually empty
+        // Since EditClipboard always has a recipe, we'll test with default recipe
+        let clipboard = EditClipboard {
+            source_photo_id: String::new(),
+            recipe: EditRecipe::default(),
+            modules: vec![], // Empty modules list
+            copied_at: Utc::now(),
+        };
+
+        let mut target = EditRecipe::default();
+        target.exposure = 2.0;
+
+        // Paste with no modules should not change anything
+        EditCopyPaste::paste(&clipboard, &mut target);
+
+        // Target should remain unchanged
+        assert_eq!(target.exposure, 2.0);
+    }
+
+    #[test]
+    fn test_paste_selected_with_empty_modules() {
+        // Test paste_selected with empty module list
+        let mut source = EditRecipe::default();
+        source.exposure = 1.5;
+        source.contrast = 50;
+
+        let clipboard = EditCopyPaste::copy_all("source", &source);
+
+        let mut target = EditRecipe::default();
+        target.exposure = 0.5;
+        target.contrast = 10;
+
+        // Paste with empty module list
+        EditCopyPaste::paste_selected(&clipboard, &mut target, &[]);
+
+        // Nothing should change
+        assert_eq!(target.exposure, 0.5);
+        assert_eq!(target.contrast, 10);
+    }
 }

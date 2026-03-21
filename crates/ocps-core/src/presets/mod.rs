@@ -391,4 +391,66 @@ mod tests {
         assert_eq!(applied.contrast, 50);
         assert_eq!(applied.exposure, 2.0);
     }
+
+    #[test]
+    fn test_preset_apply_with_empty_modules() {
+        // Edge case: preset with empty applied_modules (like None values)
+        let preset = Preset {
+            id: "test_empty_modules".to_string(),
+            name: "Empty Preset".to_string(),
+            group: "Test".to_string(),
+            description: Some("Preset with no modules".to_string()),
+            recipe: {
+                let mut r = EditRecipe::default();
+                r.exposure = 5.0;
+                r.contrast = 100;
+                r
+            },
+            applied_modules: vec![], // Empty - no modules to apply
+            is_builtin: false,
+        };
+
+        let mut base_recipe = EditRecipe::default();
+        base_recipe.exposure = 1.0;
+        base_recipe.contrast = 20;
+
+        let applied = PresetLibrary::apply(&preset, &base_recipe);
+
+        // Since applied_modules is empty, nothing should change
+        assert_eq!(applied.exposure, 1.0);
+        assert_eq!(applied.contrast, 20);
+    }
+
+    #[test]
+    fn test_preset_apply_with_some_none_modules() {
+        // Edge case: preset that only applies one module (partial preset)
+        let preset = Preset {
+            id: "test_partial".to_string(),
+            name: "Partial Preset".to_string(),
+            group: "Test".to_string(),
+            description: None,
+            recipe: {
+                let mut r = EditRecipe::default();
+                r.exposure = 3.0;
+                r.contrast = 80;
+                r.saturation = 50;
+                r
+            },
+            applied_modules: vec!["exposure".to_string()], // Only apply exposure
+            is_builtin: false,
+        };
+
+        let mut base_recipe = EditRecipe::default();
+        base_recipe.exposure = 0.5;
+        base_recipe.contrast = 10;
+        base_recipe.saturation = -20;
+
+        let applied = PresetLibrary::apply(&preset, &base_recipe);
+
+        // Only exposure should change
+        assert_eq!(applied.exposure, 3.0);
+        // Other values should be preserved
+        assert_eq!(applied.contrast, 10);
+        assert_eq!(applied.saturation, -20);
+    }
 }

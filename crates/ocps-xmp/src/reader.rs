@@ -134,6 +134,12 @@ fn parse_iptc_attributes(attrs: &HashMap<String, String>, iptc: &mut IptcData) {
             "dc:rights" | "photoshop:Copyright" => {
                 iptc.copyright = Some(value.clone());
             }
+            "dc:title" => {
+                iptc.title = Some(value.clone());
+            }
+            "dc:description" => {
+                iptc.description = Some(value.clone());
+            }
             _ => {}
         }
     }

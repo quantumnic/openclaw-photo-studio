@@ -394,4 +394,38 @@ mod tests {
         let normalized_mid = raw.normalize_value(mid_value, 0);
         assert!((normalized_mid - 0.5).abs() < 0.01);
     }
+
+    #[test]
+    fn test_decode_unsupported_format_doesnt_crash() {
+        // Create a temporary .txt file (not a RAW format)
+        let temp_path = "/tmp/ocps_test_unsupported_format.txt";
+        let mut file = std::fs::File::create(temp_path).unwrap();
+        writeln!(file, "This is a plain text file, not a RAW image").unwrap();
+        writeln!(file, "It should fail gracefully without crashing").unwrap();
+        drop(file);
+
+        // Attempt to decode - should return an error, not crash
+        let result = decode(Path::new(temp_path));
+
+        // Cleanup
+        let _ = std::fs::remove_file(temp_path);
+
+        // Verify graceful error handling
+        assert!(result.is_err(), "Decoding unsupported format should return an error");
+
+        match result.unwrap_err() {
+            RawDecodeError::RawloaderError(_) => {
+                // Expected: rawloader should reject the invalid format
+            }
+            RawDecodeError::UnsupportedFormat(_) => {
+                // Also acceptable
+            }
+            RawDecodeError::Corrupt(_) => {
+                // Also acceptable
+            }
+            other => {
+                panic!("Unexpected error type: {:?}", other);
+            }
+        }
+    }
 }

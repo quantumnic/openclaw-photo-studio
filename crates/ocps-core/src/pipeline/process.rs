@@ -185,6 +185,11 @@ pub fn apply_clarity(image: &mut RgbImage16, amount: i32) {
     let width = image.width as usize;
     let height = image.height as usize;
 
+    // Skip if image is too small for the blur radius
+    if width <= radius * 2 || height <= radius * 2 {
+        return;
+    }
+
     // Process luminance only for clarity
     for y in radius..(height - radius) {
         for x in radius..(width - radius) {
@@ -240,6 +245,11 @@ pub fn apply_sharpening(image: &mut RgbImage16, amount: u32, radius: f32) {
 
     let width = image.width as usize;
     let height = image.height as usize;
+
+    // Skip if image is too small for the blur radius
+    if width <= blur_radius * 2 || height <= blur_radius * 2 {
+        return;
+    }
 
     // Simple box blur for speed (proper would be Gaussian)
     for y in blur_radius..(height - blur_radius) {
