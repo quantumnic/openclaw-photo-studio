@@ -1,4 +1,4 @@
-import { createSignal, For } from "solid-js";
+import { For } from "solid-js";
 
 export interface FilterState {
   ratingMin: number; // 0-5

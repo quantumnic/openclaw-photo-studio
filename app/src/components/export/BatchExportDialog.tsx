@@ -52,7 +52,7 @@ export function BatchExportDialog(props: BatchExportDialogProps) {
     const startTime = Date.now();
 
     try {
-      const result = await invoke("export_photos_batch", {
+      const result = await invoke<any>("export_photos_batch", {
         photoIds: props.selectedPhotoIds,
         outputFolder: outputFolder(),
         format: format(),

@@ -16,7 +16,7 @@ interface PhotoMetadata {
 
 export function CompareView(props: CompareViewProps) {
   const [syncZoom, setSyncZoom] = createSignal(true);
-  const [zoomLevel, setZoomLevel] = createSignal(1.0);
+  const [zoomLevel] = createSignal(1.0);
 
   // Mock metadata (in reality, would fetch from catalog)
   const getMetadata = (photoId: string): PhotoMetadata => {

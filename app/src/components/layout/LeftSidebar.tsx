@@ -34,7 +34,7 @@ export function LeftSidebar(props: LeftSidebarProps) {
   const collections = ["⭐ Best of 2026", "📷 Weddings", "🏔 Landscapes", "Quick Collection"];
 
   // Load keywords from catalog
-  const [keywords] = createResource<Keyword[]>(async () => {
+  const [keywords, { refetch: refetchKeywords }] = createResource<Keyword[]>(async () => {
     try {
       return await invoke<Keyword[]>("get_keywords");
     } catch (e) {
@@ -54,7 +54,7 @@ export function LeftSidebar(props: LeftSidebarProps) {
     setNewKeyword("");
 
     // Refresh keywords
-    keywords.refetch?.();
+    refetchKeywords();
   };
 
   return (

@@ -1,4 +1,5 @@
-import { createSignal, For, createStore } from "solid-js";
+import { For } from "solid-js";
+import { createStore } from "solid-js/store";
 
 interface PrintLayout {
   paperSize: "A4" | "A3" | "Letter" | "4x6" | "5x7";

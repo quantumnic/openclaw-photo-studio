@@ -26,7 +26,7 @@ export interface BrushStroke {
 }
 
 export function BrushTool(props: BrushToolProps) {
-  const [brushActive, setBrushActive] = createSignal(false);
+  const [brushActive] = createSignal(false);
   const [brushSize, setBrushSize] = createSignal(50); // 0-100, relative to image
   const [brushFeather, setBrushFeather] = createSignal(50); // 0-100
   const [brushFlow, setBrushFlow] = createSignal(100); // 0-100

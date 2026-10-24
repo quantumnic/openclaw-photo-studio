@@ -23,7 +23,7 @@ export function AppShell(props: AppShellProps) {
   const [rightOpen, setRightOpen] = createSignal(true);
   const [filmstripOpen, setFilmstripOpen] = createSignal(true);
   const [selectedPhotoId, setSelectedPhotoId] = createSignal<string | null>(null);
-  const [selectedPhotoIds, setSelectedPhotoIds] = createSignal<string[]>([]);
+  const [selectedPhotoIds] = createSignal<string[]>([]);
   const [allPhotoIds, setAllPhotoIds] = createSignal<string[]>([]);
   const [commandPaletteOpen, setCommandPaletteOpen] = createSignal(false);
   const [diagnosticsOpen, setDiagnosticsOpen] = createSignal(false);
@@ -146,7 +146,7 @@ export function AppShell(props: AppShellProps) {
 
         {/* Right Sidebar */}
         <Show when={rightOpen()}>
-          <RightSidebar module={activeModule()} selectedPhotoId={selectedPhotoId()} />
+          <RightSidebar module={activeModule()} selectedPhotoId={selectedPhotoId() ?? undefined} />
         </Show>
       </div>
 

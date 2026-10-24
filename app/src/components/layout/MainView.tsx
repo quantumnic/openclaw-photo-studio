@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
-import { createSignal, onMount, Show, For, onCleanup, createEffect } from "solid-js";
+import { createSignal, onMount, Show, For, onCleanup, createEffect, type JSX } from "solid-js";
 import { createStore } from "solid-js/store";
 import { FilterBar, FilterState } from "../library/FilterBar";
 import { CompareView } from "../library/CompareView";
@@ -72,7 +72,7 @@ interface LibraryViewProps {
 
 function LibraryView(props: LibraryViewProps & { onPhotosLoaded?: (photoIds: string[]) => void }) {
   const [comparePhotoIds, setComparePhotoIds] = createSignal<[string, string]>(["photo1", "photo2"]);
-  const [surveyPhotoIds, setSurveyPhotoIds] = createSignal<string[]>(["p1", "p2", "p3", "p4", "p5", "p6"]);
+  const [surveyPhotoIds] = createSignal<string[]>(["p1", "p2", "p3", "p4", "p5", "p6"]);
 
   const handleSwap = () => {
     setComparePhotoIds(([a, b]) => [b, a]);
@@ -180,7 +180,7 @@ function LibraryGridView(props: LibraryGridViewProps) {
   const [photos, setPhotos] = createSignal<Photo[]>([]);
   const [loading, setLoading] = createSignal(false);
   const [stats, setStats] = createSignal<CatalogStats | null>(null);
-  const [thumbnailSize, setThumbnailSize] = createSignal(160);
+  const [thumbnailSize] = createSignal(160);
   const [importResult, setImportResult] = createSignal<any>(null);
   const [error, setError] = createSignal<string | null>(null);
   const [focusedIndex, setFocusedIndex] = createSignal<number>(-1);
@@ -252,7 +252,7 @@ function LibraryGridView(props: LibraryGridViewProps) {
 
       if (!selected) return;
 
-      const path = typeof selected === "string" ? selected : selected.path;
+      const path = typeof selected === "string" ? selected : (selected as { path: string }).path;
       setLoading(true);
 
       const startTime = Date.now();
@@ -488,18 +488,9 @@ function LibraryGridView(props: LibraryGridViewProps) {
   // Reload photos when filter changes
   createEffect(() => {
     // Track all filter properties
-    const _ = [filter.ratingMin, filter.flag, filter.colorLabel, filter.searchQuery];
+    void [filter.ratingMin, filter.flag, filter.colorLabel, filter.searchQuery];
     loadPhotos();
   });
-
-  const colorLabelColors: Record<string, string> = {
-    red: "#ff4a4a",
-    yellow: "#e8b84b",
-    green: "#4ade80",
-    blue: "#4a9eff",
-    purple: "#a855f7",
-    none: "transparent",
-  };
 
   return (
     <div class="h-full flex flex-col">
@@ -698,7 +689,7 @@ function DevelopView(props: DevelopViewProps) {
 
   // Mouse pan handling
   function handleMouseDown(e: MouseEvent) {
-    if (zoom() > 0 && e.button === 0 && e.spaceKey !== undefined ? e.spaceKey : false) {
+    if (zoom() > 0 && e.button === 0 && (e as MouseEvent & { spaceKey?: boolean }).spaceKey !== undefined ? (e as MouseEvent & { spaceKey?: boolean }).spaceKey : false) {
       setIsPanning(true);
       setPanStart({ x: e.clientX, y: e.clientY, panX: pan.x, panY: pan.y });
       e.preventDefault();
@@ -877,22 +868,12 @@ function DevelopView(props: DevelopViewProps) {
               <img
                 src={uri()}
                 class={zoom() === 0 ? "" : "pointer-events-none"}
-                style={imageStyle()}
+                style={imageStyle() as JSX.CSSProperties}
               />
             )}
           </Show>
         </Show>
       </div>
-    </div>
-  );
-}
-
-function PlaceholderView(props: { label: string; emoji: string; phase: string }) {
-  return (
-    <div class="h-full flex flex-col items-center justify-center text-[#444]">
-      <div class="text-6xl mb-4">{props.emoji}</div>
-      <div class="text-[#666] font-medium mb-1">{props.label}</div>
-      <div class="text-xs text-[#333]">Coming in {props.phase}</div>
     </div>
   );
 }

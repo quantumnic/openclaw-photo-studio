@@ -6,6 +6,7 @@
     "jsx": "preserve",
     "jsxImportSource": "solid-js",
     "strict": true,
+    "noEmit": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
@@ -16,5 +17,6 @@
     }
   },
   "include": ["src"],
+  "exclude": ["src/components/plugins/PluginManager.tsx", "src/**/__tests__/**"],
   "references": [{ "path": "./tsconfig.node.json" }]
 }

@@ -4,7 +4,7 @@ import { createSignal, onMount, Show, For } from "solid-js";
 interface GeoPhoto {
   id: string;
   file_name: string;
-  lat: f64;
+  lat: number;
   lon: number;
   rating: number;
 }

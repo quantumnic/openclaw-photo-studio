@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { createSignal, onMount, Show, For } from "solid-js";
+import { onMount, Show, For } from "solid-js";
 import { createStore } from "solid-js/store";
 
 interface FilmstripProps {

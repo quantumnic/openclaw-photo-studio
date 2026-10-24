@@ -1,4 +1,4 @@
-import { createSignal, createEffect, onMount } from 'solid-js';
+import { createSignal, createEffect } from 'solid-js';
 import { invoke } from '@tauri-apps/api/core';
 
 interface HistogramData {

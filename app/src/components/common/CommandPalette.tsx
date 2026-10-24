@@ -1,5 +1,5 @@
 import { createSignal, For, onMount, Show, onCleanup } from "solid-js";
-import { DEFAULT_BINDINGS, type ShortcutBinding } from "../../lib/shortcuts";
+import { DEFAULT_BINDINGS } from "../../lib/shortcuts";
 
 interface CommandPaletteProps {
   open: boolean;
